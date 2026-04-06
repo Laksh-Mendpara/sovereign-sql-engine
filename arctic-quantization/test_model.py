@@ -1,3 +1,8 @@
+"""Test an Arctic Text2SQL model with a standard evaluation prompt set.
+
+This script loads a quantized or tensorized Arctic model and evaluates it on
+20 diverse SQL generation tasks, extracting and displaying the generated SQL queries.
+"""
 import argparse
 import os
 import re
@@ -8,6 +13,12 @@ from prompts import QUESTIONS, SYSTEM_PROMPT, build_user_prompt
 
 
 def parse_args():
+    """Parse command-line arguments for model testing.
+    
+    Returns:
+        argparse.Namespace: Arguments for model path, quantization type, tensor settings,
+                          generation parameters, and optional question subset.
+    """
     parser = argparse.ArgumentParser(description="Test an Arctic model with the standard Text2SQL prompt set.")
     parser.add_argument("--model", default=DEFAULT_GPTQ8_REPO_ID, help="Local path or Hugging Face repo.")
     parser.add_argument("--tokenizer", help="Tokenizer path or repo. Defaults to --model.")
@@ -26,11 +37,21 @@ def parse_args():
 
 
 def resolve_model_source(args, snapshot_download):
+    """Resolve model and tokenizer sources, downloading from Hub if specified.
+    
+    Args:
+        args: Parsed command-line arguments.
+        snapshot_download: Hugging Face snapshot_download function.
+        
+    Returns:
+        tuple: (model_source: str, tokenizer_source: str) - paths or repo IDs.
+    """
     model_source = args.model
     tokenizer_source = args.tokenizer or args.model
     if not args.from_hub:
         return model_source, tokenizer_source
 
+    # Download model from Hub to local cache
     cache_dir = Path(args.cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     token = load_hf_token()
@@ -44,6 +65,17 @@ def resolve_model_source(args, snapshot_download):
 
 
 def extract_sql(text: str) -> str:
+    """Extract SQL code block from model output.
+    
+    Searches for ```sql...``` code block and extracts the SQL content,
+    or returns original text if no SQL block found.
+    
+    Args:
+        text (str): Model output text.
+        
+    Returns:
+        str: Extracted SQL code block or original text.
+    """
     match = re.search(r"```sql\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)
     if match:
         return f"```sql\n{match.group(1).strip()}\n```"
@@ -51,27 +83,38 @@ def extract_sql(text: str) -> str:
 
 
 def main():
+    """Main entry point: load model and run SQL generation evaluation.
+    
+    Loads the specified Arctic model, formats test questions with system prompt,
+    generates SQL queries using vLLM, and displays results with extracted SQL.
+    """
     args = parse_args()
+    # Set GPU device visibility if specified
     if args.cuda_visible_devices:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
 
+    # Import inference libraries
     from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
 
+    # Resolve model path, downloading from Hub if needed
     model_source, tokenizer_source = resolve_model_source(args, snapshot_download)
+    # Load tokenizer with Mistral regex fix
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_source,
         fix_mistral_regex=True,
         trust_remote_code=True,
     )
 
+    # Select all or specific test question(s)
     selected_questions = QUESTIONS
     if args.question_index:
         if args.question_index < 1 or args.question_index > len(QUESTIONS):
             raise ValueError(f"--question-index must be between 1 and {len(QUESTIONS)}.")
         selected_questions = [QUESTIONS[args.question_index - 1]]
 
+    # Format selected questions with system prompt and schema
     prompts = []
     for question in selected_questions:
         prompts.append(
@@ -85,7 +128,9 @@ def main():
             )
         )
 
+    # Configure sampling with greedy decoding (temperature=0)
     sampling_params = SamplingParams(temperature=0, max_tokens=args.max_tokens, n=1)
+    # Initialize vLLM for optimized inference
     llm = LLM(
         model=model_source,
         tokenizer=tokenizer_source,
@@ -100,7 +145,9 @@ def main():
         trust_remote_code=True,
     )
 
+    # Generate SQL queries for all prompts
     outputs = llm.generate(prompts, sampling_params)
+    # Display results with extracted SQL code
     for index, output in enumerate(outputs, start=1):
         print(f"Question {index}:")
         print(selected_questions[index - 1])

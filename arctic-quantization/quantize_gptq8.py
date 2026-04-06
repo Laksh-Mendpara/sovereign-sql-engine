@@ -1,3 +1,9 @@
+"""Quantize Arctic model using GPTQ 8-bit quantization.
+
+This script performs GPTQ-8 quantization on the Arctic model using calibration questions
+from the Text2SQL task. GPTQ quantization provides better performance than BitsAndBytes
+with similar memory savings.
+"""
 import argparse
 import os
 from pathlib import Path
@@ -10,6 +16,12 @@ from prompts import QUESTIONS, SYSTEM_PROMPT, build_user_prompt
 
 
 def parse_args():
+    """Parse command-line arguments for GPTQ quantization.
+    
+    Returns:
+        argparse.Namespace: Arguments for model path, output, bit depth, group size,
+                          sequence length, batch size, and GPU settings.
+    """
     parser = argparse.ArgumentParser(description="Quantize Arctic to GPTQ 8-bit.")
     parser.add_argument("--model-id", default=BASE_MODEL_ID)
     parser.add_argument("--output-dir", default=str(DEFAULT_GPTQ8_DIR))
@@ -22,6 +34,16 @@ def parse_args():
 
 
 def build_calibration_texts(tokenizer):
+    """Build calibration texts from test questions and system prompt.
+    
+    Uses Text2SQL test questions formatted as chat templates for GPTQ calibration.
+    
+    Args:
+        tokenizer: Loaded tokenizer for the model.
+        
+    Returns:
+        list: Formatted prompt strings for calibration.
+    """
     prompts = []
     for question in QUESTIONS:
         prompts.append(
@@ -38,14 +60,22 @@ def build_calibration_texts(tokenizer):
 
 
 def main():
+    """Main entry point: quantize and save Arctic model in GPTQ 8-bit format.
+    
+    Builds calibration texts, configures GPTQ quantization, loads the model,
+    and saves the quantized result with tokenizer.
+    """
     args = parse_args()
+    # Set GPU device visibility if specified
     if args.cuda_visible_devices:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
 
+    # Load tokenizer and set padding token if needed
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Build calibration dataset and create GPTQ configuration
     calibration_texts = build_calibration_texts(tokenizer)
     quantization_config = GPTQConfig(
         bits=args.bits,
@@ -60,6 +90,7 @@ def main():
         pad_token_id=tokenizer.pad_token_id,
     )
 
+    # Load model with GPTQ quantization configuration
     model = AutoModelForCausalLM.from_pretrained(
         args.model_id,
         quantization_config=quantization_config,
@@ -68,6 +99,7 @@ def main():
         trust_remote_code=True,
     )
 
+    # Save quantized model and tokenizer
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     tokenizer.save_pretrained(output_dir)

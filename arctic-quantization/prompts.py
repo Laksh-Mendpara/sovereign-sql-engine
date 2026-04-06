@@ -1,9 +1,17 @@
+"""Prompts and schema definitions for Arctic Text2SQL model evaluation.
+
+This module contains the system prompt, database schema, test questions,
+and prompt template used for evaluating the Arctic Text2SQL model.
+"""
+
+# System prompt that instructs the model to act as a SQL generation expert
 SYSTEM_PROMPT = (
     "You are a data science expert. Below, you are provided with a database "
     "schema and a natural language question. Your task is to understand the "
     "schema and generate a valid SQL query to answer the question."
 )
 
+# Database schema with 6 interconnected tables covering organizations, cloud resources, and billing
 SCHEMA = """CREATE TABLE organizations (
     org_id INTEGER PRIMARY KEY,
     org_name TEXT NOT NULL,
@@ -58,6 +66,7 @@ CREATE TABLE roles (
     permission_level INTEGER -- 1 (Low) to 5 (Critical)
 );"""
 
+# 20 diverse SQL generation test questions ranging from basic queries to complex analytical tasks
 QUESTIONS = [
     "List all organizations in the 'Healthcare' industry located in 'Germany'.",
     "Count the total number of 'Active' resources currently running in the 'us-east-1' region.",
@@ -106,4 +115,12 @@ In your answer, please enclose the generated SQL query in a code block:
 
 
 def build_user_prompt(question: str) -> str:
+    """Build a user prompt by inserting schema and question into template.
+    
+    Args:
+        question (str): SQL generation question to answer.
+        
+    Returns:
+        str: Formatted prompt with schema, question, and instructions.
+    """
     return USER_PROMPT_TEMPLATE.format(schema=SCHEMA, question=question)
