@@ -10,10 +10,9 @@ from pathlib import Path
 from huggingface_hub import HfApi
 
 from common import (
-    DEFAULT_GPTQ8_DIR,
-    DEFAULT_GPTQ8_REPO_ID,
-    DEFAULT_TENSORIZED_DIR,
-    DEFAULT_TENSORIZED_REPO_ID,
+    BASE_MODEL_ID,
+    get_default_output_dir,
+    get_default_repo_id,
     ensure_hf_token,
     setup_logging,
 )
@@ -32,14 +31,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Push a local Arctic model folder to Hugging Face Hub.")
     parser.add_argument(
         "--source",
-        choices=["gptq8", "tensorized", "custom"],
+        choices=["gptq8", "awq4", "tensorized", "custom"],
         default="gptq8",
-        help="Pick a default local folder/repo pair or use --local-dir and --repo-id with custom.",
+        help="Quantization type (gptq8, awq4, tensorized) or custom (requires --local-dir and --repo-id).",
     )
+    parser.add_argument("--model-id", default=BASE_MODEL_ID, help="Hugging Face source model ID (used to generate default paths/repo names).")
     parser.add_argument("--local-dir", help="Local folder to upload.")
     parser.add_argument("--repo-id", help="Destination Hugging Face model repo.")
     parser.add_argument("--private", action="store_true", help="Create the repo as private.")
-    parser.add_argument("--commit-message", default="Upload Arctic model artifacts")
+    parser.add_argument("--commit-message", default="Upload quantized model artifacts")
     parser.add_argument("--log-level", default="INFO", help="Logging level for debugging.")
     return parser.parse_args()
 
@@ -56,10 +56,10 @@ def resolve_paths(args):
     Raises:
         ValueError: If custom source without both --local-dir and --repo-id.
     """
-    if args.source == "gptq8":
-        return Path(args.local_dir or DEFAULT_GPTQ8_DIR), args.repo_id or DEFAULT_GPTQ8_REPO_ID
-    if args.source == "tensorized":
-        return Path(args.local_dir or DEFAULT_TENSORIZED_DIR), args.repo_id or DEFAULT_TENSORIZED_REPO_ID
+    if args.source in ["gptq8", "awq4", "tensorized"]:
+        local_dir = Path(args.local_dir) if args.local_dir else get_default_output_dir(args.model_id, args.source)
+        repo_id = args.repo_id or get_default_repo_id(args.model_id, args.source)
+        return local_dir, repo_id
     if not args.local_dir or not args.repo_id:
         raise ValueError("--source custom requires both --local-dir and --repo-id.")
     return Path(args.local_dir), args.repo_id
