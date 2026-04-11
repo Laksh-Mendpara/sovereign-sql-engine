@@ -1,8 +1,8 @@
-"""Quantize Arctic model using GPTQ 8-bit quantization.
+"""Quantize model using GPTQ 8-bit quantization.
 
-This script performs GPTQ-8 quantization on the Arctic model using calibration questions
-from the Text2SQL task. GPTQ quantization provides better performance than BitsAndBytes
-with similar memory savings.
+This script performs GPTQ-8 quantization on the specified model using calibration questions
+from the Text2SQL task if text2sql dataset is used, else standard dataset. GPTQ quantization 
+provides better performance than BitsAndBytes with similar memory savings.
 """
 import argparse
 import logging
@@ -66,7 +66,7 @@ def build_calibration_texts(tokenizer):
 
 
 def main():
-    """Main entry point: quantize and save Arctic model in GPTQ 8-bit format.
+    """Main entry point: quantize and save model in GPTQ 8-bit format.
     
     Builds calibration texts, configures GPTQ quantization, loads the model,
     and saves the quantized result with tokenizer.

@@ -1,4 +1,4 @@
-"""Common configuration and utility functions for Arctic model quantization.
+"""Common configuration and utility functions for model quantization.
 
 This module provides shared constants, paths, and helper functions used across
 the quantization, tensorization, and deployment scripts.
@@ -39,7 +39,7 @@ def get_default_repo_id(model_id: str, quant_type: str) -> str:
 
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
-    """Configure process-wide logging for the Arctic scripts.
+    """Configure process-wide logging for the quantization scripts.
 
     Args:
         level: Logging level name such as DEBUG, INFO, or WARNING.
@@ -56,7 +56,7 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stdout,
     )
-    return logging.getLogger("arctic_quantization")
+    return logging.getLogger("model_quantization")
 
 
 def load_hf_token() -> str | None:

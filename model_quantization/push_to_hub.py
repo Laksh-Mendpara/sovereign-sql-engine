@@ -1,4 +1,4 @@
-"""Upload local Arctic quantized models to Hugging Face Hub.
+"""Upload local quantized models to Hugging Face Hub.
 
 This script facilitates uploading GPTQ-8 or tensorized models to the Hugging Face Hub
 with proper authentication and optional privacy settings.
@@ -28,7 +28,7 @@ def parse_args():
         argparse.Namespace: Parsed arguments including source, local directory,
                           repo ID, privacy setting, and commit message.
     """
-    parser = argparse.ArgumentParser(description="Push a local Arctic model folder to Hugging Face Hub.")
+    parser = argparse.ArgumentParser(description="Push a local model folder to Hugging Face Hub.")
     parser.add_argument(
         "--source",
         choices=["gptq8", "awq4", "tensorized", "custom"],
