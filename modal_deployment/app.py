@@ -38,14 +38,17 @@ LLAMA_GUARD_MODEL_NAME = "ByteMaster01/llama-guard-3-1b-awq4"
 # All of these can be overridden by setting environment variables *before*
 # running `modal deploy`.  Defaults work fine for most use-cases.
 N_GPU = int(os.environ.get("N_GPU", "1"))
-MAX_MODEL_LEN_PHI4 = int(os.environ.get("MAX_MODEL_LEN_PHI4", "16384"))
-MAX_MODEL_LEN_LLAMA_GUARD = int(os.environ.get("MAX_MODEL_LEN_LLAMA_GUARD", "8192"))
+MAX_MODEL_LEN_PHI4 = int(os.environ.get("MAX_MODEL_LEN_PHI4", "4096"))
+MAX_MODEL_LEN_LLAMA_GUARD = int(os.environ.get("MAX_MODEL_LEN_LLAMA_GUARD", "2084"))
 GPU_MEMORY_UTILIZATION = float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.90"))
+VLLM_QUANTIZATION = os.environ.get("VLLM_QUANTIZATION", "auto").strip().lower()
+VLLM_VERSION = os.environ.get("VLLM_VERSION", "0.19.0").strip()
+FLASHINFER_VERSION = os.environ.get("FLASHINFER_VERSION", "").strip()
 
 # Fast cold-start snapshotting optimization
 ENABLE_SNAPSHOTS = os.environ.get("ENABLE_SNAPSHOTS", "1") == "1"
 
-SCALEDOWN_WINDOW = int(os.environ.get("SCALEDOWN_WINDOW", "10"))  # minutes
+SCALEDOWN_WINDOW = int(os.environ.get("SCALEDOWN_WINDOW", "1"))  # minutes
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "32"))
 
 # ---- Modal app -------------------------------------------------------------
@@ -58,9 +61,13 @@ vllm_image = (
     )
     .entrypoint([])
     .uv_pip_install(
-        "vllm==0.13.0",
-        "huggingface-hub==0.36.0",
-        "flashinfer-python==0.5.3",
+        *(
+            [
+                f"vllm=={VLLM_VERSION}",
+                "huggingface-hub==0.36.0",
+            ]
+            + ([f"flashinfer-python=={FLASHINFER_VERSION}"] if FLASHINFER_VERSION else [])
+        )
     )
     .env(
         {
@@ -141,6 +148,13 @@ def _warmup() -> None:
 
 # ---- vLLM command builder --------------------------------------------------
 
+def _resolve_quantization() -> str | None:
+    """Use an explicit override, otherwise let vLLM read the model config."""
+    if VLLM_QUANTIZATION in {"", "auto"}:
+        return None
+    return VLLM_QUANTIZATION
+
+
 def _build_vllm_cmd(model_name: str, max_model_len: int) -> list[str]:
     """Assemble the `vllm serve` CLI invocation."""
     cmd = [
@@ -157,8 +171,11 @@ def _build_vllm_cmd(model_name: str, max_model_len: int) -> list[str]:
         "--tensor-parallel-size", str(N_GPU),
         "--trust-remote-code",
         "--max-model-len", str(max_model_len),
-        "--quantization", "gptq",  # Optimize configuration for W4A16 4-bit GPQT models
     ]
+
+    quantization = _resolve_quantization()
+    if quantization:
+        cmd += ["--quantization", quantization]
 
     # Snapshot mode restricts concurrency and seq length so the GPU memory
     # layout is deterministic and can be snapshotted reliably.
@@ -177,7 +194,7 @@ def _build_vllm_cmd(model_name: str, max_model_len: int) -> list[str]:
 @app.cls(
     image=vllm_image,
     gpu=f"L4:{N_GPU}",
-    scaledown_window=SCALEDOWN_WINDOW * MINUTES,
+    scaledown_window=10, #SCALEDOWN_WINDOW * MINUTES,
     timeout=10 * MINUTES,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
@@ -233,7 +250,7 @@ class Phi4Server:
 @app.cls(
     image=vllm_image,
     gpu=f"T4:{N_GPU}",
-    scaledown_window=SCALEDOWN_WINDOW * MINUTES,
+    scaledown_window=10, #SCALEDOWN_WINDOW * MINUTES,
     timeout=10 * MINUTES,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
@@ -292,8 +309,8 @@ class LlamaGuardServer:
 async def test(test_timeout: int = 10 * MINUTES):
     """Run a basic health check and a single streamed inference request directly to both deployments."""
     print("Fetching server URLs...")
-    phi4_url = Phi4Server().serve.get_web_url()
-    llama_guard_url = LlamaGuardServer().serve.get_web_url()
+    phi4_url = await Phi4Server().serve.get_web_url.aio()
+    llama_guard_url = await LlamaGuardServer().serve.get_web_url.aio()
     print(f"Phi-4 Server URL: {phi4_url}")
     print(f"Llama Guard Server URL: {llama_guard_url}")
 
