@@ -1,24 +1,62 @@
-"""Common configuration and utility functions for Arctic model quantization.
+"""Common configuration and utility functions for model quantization.
 
 This module provides shared constants, paths, and helper functions used across
 the quantization, tensorization, and deployment scripts.
 """
+import logging
 import os
+import sys
 from pathlib import Path
 
-# Base model identifier from Hugging Face Hub
+# Base model identifier from Hugging Face Hub (default fallback)
 BASE_MODEL_ID = "Snowflake/Arctic-Text2SQL-R1-7B"
-# Default Hugging Face Hub repository IDs for quantized and tensorized models
-DEFAULT_GPTQ8_REPO_ID = "ByteMaster01/arctic-text2sql-r1-7b-gptq8"
-DEFAULT_TENSORIZED_REPO_ID = "ByteMaster01/arctic-text2sql-r1-7b-gptq8-tensorized"
 
 # Project directory paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Local model storage directories
 MODELS_DIR = PROJECT_ROOT / "models"
-DEFAULT_GPTQ8_DIR = MODELS_DIR / "arctic-text2sql-r1-7b-gptq8"  # GPTQ 8-bit quantized model
-DEFAULT_Q8_DIR = MODELS_DIR / "arctic-text2sql-r1-7b-q8"  # BitsAndBytes 8-bit quantized model
-DEFAULT_TENSORIZED_DIR = MODELS_DIR / "arctic-text2sql-r1-7b-gptq8-tensorized"  # vLLM tensorized model
+
+
+def get_model_name_from_id(model_id: str) -> str:
+    """Extract the model name from a Hugging Face repo ID."""
+    return model_id.split("/")[-1]
+
+
+def get_default_output_dir(model_id: str, quant_type: str) -> Path:
+    """Get the default local output directory for a quantized model.
+    quant_type should be 'gptq8', 'awq4', 'tensorized', etc.
+    """
+    model_name = get_model_name_from_id(model_id).lower()
+    return MODELS_DIR / f"{model_name}-{quant_type}"
+
+
+def get_default_repo_id(model_id: str, quant_type: str) -> str:
+    """Get the default Hugging Face repository ID for publishing."""
+    from huggingface_hub import HfApi
+    username = HfApi(token=ensure_hf_token()).whoami()["name"]
+    model_name = get_model_name_from_id(model_id).lower()
+    return f"{username}/{model_name}-{quant_type}"
+
+
+def setup_logging(level: str = "INFO") -> logging.Logger:
+    """Configure process-wide logging for the quantization scripts.
+
+    Args:
+        level: Logging level name such as DEBUG, INFO, or WARNING.
+
+    Returns:
+        logging.Logger: Logger scoped to this package.
+    """
+    numeric_level = getattr(logging, level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {level}")
+
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+    return logging.getLogger("model_quantization")
 
 
 def load_hf_token() -> str | None:

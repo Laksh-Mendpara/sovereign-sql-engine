@@ -54,6 +54,20 @@ def record(name: str, passed: bool, detail: str = "", duration: float = 0.0):
     results.append({"name": name, "passed": passed, "detail": detail, "duration": duration})
 
 
+def instruction_as_user_message(instruction: str, user_request: str) -> list[dict[str, str]]:
+    """Embed system-style guidance into the first user turn for strict chat templates."""
+    return [
+        {
+            "role": "user",
+            "content": (
+                "Follow these instructions for this conversation:\n"
+                f"{instruction}\n\n"
+                f"User request: {user_request}"
+            ),
+        }
+    ]
+
+
 # ---- Individual test functions ---------------------------------------------
 # Each test catches its own exceptions so a single failure never tears down
 # the whole suite.
@@ -93,7 +107,6 @@ def test_chat_completion(client: openai.OpenAI, verbose: bool = False) -> None:
         response = client.chat.completions.create(
             model="llm",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "What is 2 + 2?"},
             ],
             max_tokens=64,
@@ -142,7 +155,6 @@ def test_multi_turn_conversation(client: openai.OpenAI, verbose: bool = False) -
         response = client.chat.completions.create(
             model="llm",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "My name is Alice."},
                 {"role": "assistant", "content": "Hello Alice! How can I help you today?"},
                 {"role": "user", "content": "What is my name?"},
@@ -159,21 +171,18 @@ def test_multi_turn_conversation(client: openai.OpenAI, verbose: bool = False) -
 
 
 def test_system_prompt_adherence(client: openai.OpenAI, verbose: bool = False) -> None:
-    """Give a distinctive system prompt and check the model follows it."""
+    """Give a system-style instruction via the first user turn and check adherence."""
     t0 = time.time()
     try:
         response = client.chat.completions.create(
             model="llm",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a pirate. Always respond in pirate speak. "
-                        "Use words like 'arr', 'matey', 'treasure'."
-                    ),
-                },
-                {"role": "user", "content": "How are you today?"},
-            ],
+            messages=instruction_as_user_message(
+                (
+                    "You are a pirate. Always respond in pirate speak. "
+                    "Use words like 'arr', 'matey', and 'treasure'."
+                ),
+                "How are you today?",
+            ),
             max_tokens=128,
             temperature=0.7,
         )

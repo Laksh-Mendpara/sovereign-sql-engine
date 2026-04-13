@@ -4,11 +4,15 @@ This script converts a GPTQ-8 quantized model into vLLM's tensorized format,
 which precompiles the model graph for optimized inference performance.
 """
 import argparse
+import logging
 import os
 import shutil
 from pathlib import Path
 
-from common import DEFAULT_GPTQ8_DIR, DEFAULT_GPTQ8_REPO_ID, DEFAULT_TENSORIZED_DIR
+from common import DEFAULT_GPTQ8_DIR, DEFAULT_GPTQ8_REPO_ID, DEFAULT_TENSORIZED_DIR, setup_logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -25,6 +29,7 @@ def parse_args():
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.45)
     parser.add_argument("--max-model-len", type=int, default=1024)
     parser.add_argument("--cuda-visible-devices", help="Optional CUDA_VISIBLE_DEVICES override.")
+    parser.add_argument("--log-level", default="INFO", help="Logging level for debugging.")
     return parser.parse_args()
 
 
@@ -49,6 +54,7 @@ def copy_model_artifacts(source_dir: Path, target_dir: Path):
         if path.name.startswith("pytorch_model") and path.suffix == ".bin":
             continue
         if path.is_file():
+            logger.debug("Copying artifact %s -> %s", path.name, target_dir / path.name)
             shutil.copy2(path, target_dir / path.name)
 
 
@@ -59,11 +65,23 @@ def main():
     and copies supporting artifacts to the output directory.
     """
     args = parse_args()
+    setup_logging(args.log_level)
+    logger.info("Starting tensorization from %s", args.source_dir)
+    logger.debug(
+        "Tensorization config: served_model_name=%s output_dir=%s gpu_memory_utilization=%s max_model_len=%s",
+        args.served_model_name,
+        args.output_dir,
+        args.gpu_memory_utilization,
+        args.max_model_len,
+    )
+
     # Set GPU device visibility if specified
     if args.cuda_visible_devices:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+        logger.info("Using CUDA_VISIBLE_DEVICES=%s", args.cuda_visible_devices)
 
     # Import vLLM tensorizer components
+    logger.debug("Importing vLLM tensorizer components")
     from vllm.engine.arg_utils import EngineArgs
     from vllm.model_executor.model_loader.tensorizer import (
         TensorizerConfig,
@@ -75,8 +93,11 @@ def main():
     target_dir = Path(args.output_dir)
     if not source_dir.exists():
         raise FileNotFoundError(f"GPTQ source model not found at {source_dir.resolve()}.")
+    logger.info("Using source directory %s", source_dir.resolve())
+    logger.info("Writing tensorized output to %s", target_dir.resolve())
 
     # Configure vLLM engine with GPTQ quantization
+    logger.info("Creating vLLM engine arguments")
     engine_args = EngineArgs(
         model=str(source_dir),
         tokenizer=str(source_dir),
@@ -90,6 +111,7 @@ def main():
     )
 
     # Configure and run tensorization
+    logger.info("Tensorizing model")
     tensorizer_config = TensorizerConfig(tensorizer_dir=str(target_dir))
     tensorize_vllm_model(
         engine_args=engine_args,
@@ -97,9 +119,10 @@ def main():
         generate_keyfile=False,
     )
     # Copy tokenizer and config files from source
+    logger.info("Copying supporting artifacts")
     copy_model_artifacts(source_dir, target_dir)
 
-    print(f"Tensorized GPTQ model saved to {target_dir.resolve()}")
+    logger.info("Tensorized GPTQ model saved to %s", target_dir.resolve())
 
 
 if __name__ == "__main__":

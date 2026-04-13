@@ -110,6 +110,8 @@ If you are already inside the project virtual environment, you can also run:
 python main.py /path/to/database_description
 ```
 
+Set `LOG_LEVEL=DEBUG` before running the script if you want more verbose import and Pinecone indexing logs.
+
 ## Output
 
 On success, the script prints:

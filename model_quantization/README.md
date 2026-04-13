@@ -40,6 +40,8 @@ The token is read automatically by all scripts via `common.load_hf_token()`, whi
 | `test_model.py` | Run the standard prompt set against a local or Hub model |
 | `push_to_hub.py` | Upload a local model folder to the Hugging Face Hub |
 
+All quantization and upload scripts accept `--log-level` for more verbose debugging output, for example `--log-level DEBUG`.
+
 ### Pushing a model to the Hub
 
 ```bash

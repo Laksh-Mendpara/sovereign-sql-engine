@@ -1,5 +1,7 @@
 import csv
 import io
+import json
+import logging
 import os
 import reprlib
 import sys
@@ -10,6 +12,12 @@ from pinecone.exceptions import PineconeException
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Configuration
 metadata_conn_str = (
@@ -22,6 +30,7 @@ source_conn_str = (
 )
 PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "metadata")
 PINECONE_EMBED_MODEL = os.getenv("PINECONE_EMBED_MODEL", "llama-text-embed-v2")
+DB_NAME = os.getenv("DB_NAME", os.getenv("SQLITE_DB", ""))
 
 
 def open_csv_with_fallback(file_path):
@@ -124,6 +133,37 @@ def fetch_column_example(source_conn, table_name, column_name):
     return "[" + ", ".join(formatted_examples) + "]"
 
 
+def fetch_table_relationships(source_conn, table_name):
+    if not table_name:
+        return []
+
+    table_identifier = quote_identifier(table_name)
+
+    try:
+        cursor = source_conn.execute(f"PRAGMA foreign_key_list({table_identifier})")
+        rows = cursor.fetchall()
+    except Exception:
+        return []
+
+    if not rows:
+        return []
+
+    relationships = []
+    for row in rows:
+        if len(row) < 4:
+            continue
+
+        referenced_table = row[2]
+        from_column = row[3]
+
+        if not referenced_table or not from_column:
+            continue
+
+        relationships.append({from_column: referenced_table})
+
+    return relationships
+
+
 def build_table_record(table_name, description):
     return {
         "id": f"table::{table_name}",
@@ -131,6 +171,7 @@ def build_table_record(table_name, description):
         "metadata": {
             "category": "table",
             "name": table_name,
+            "db": DB_NAME,
         },
     }
 
@@ -151,8 +192,63 @@ def build_column_record(table_name, row):
             "category": "col",
             "name": column_name,
             "table_name": table_name,
+            "db": DB_NAME,
         },
     }
+
+
+def export_table_graph_to_neo4j(table_graph_rows):
+    neo4j_url = os.getenv("NEO4J_URL", "").strip()
+    neo4j_username = os.getenv("NEO4J_USERNAME", "").strip()
+    neo4j_password = os.getenv("NEO4J_PASSWORD", "").strip()
+
+    if not (neo4j_url and neo4j_username and neo4j_password):
+        logger.info("Neo4j env vars not fully set; skipping Neo4j graph export")
+        return
+
+    try:
+        from neo4j import GraphDatabase
+    except ImportError as exc:
+        raise ImportError(
+            "Neo4j support requires the 'neo4j' package. Install dependencies again to use graph export."
+        ) from exc
+
+    logger.info("Exporting %d table nodes to Neo4j for db=%s", len(table_graph_rows), DB_NAME)
+    driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_username, neo4j_password))
+
+    try:
+        with driver.session() as session:
+            session.run("MATCH (t:Table {db: $db}) DETACH DELETE t", db=DB_NAME)
+
+            for row in table_graph_rows:
+                session.run(
+                    """
+                    MERGE (t:Table {name: $table_name, db: $db})
+                    SET t.description = $description
+                    """,
+                    table_name=row["table_name"],
+                    description=row["description"],
+                    db=DB_NAME,
+                )
+
+            for row in table_graph_rows:
+                for relationship in row["relationships"]:
+                    for from_col, referenced_table in relationship.items():
+                        session.run(
+                            """
+                            MATCH (source:Table {name: $source_table, db: $db})
+                            MATCH (target:Table {name: $target_table, db: $db})
+                            MERGE (source)-[r:REFERENCES {from_col: $from_col, db: $db}]->(target)
+                            """,
+                            source_table=row["table_name"],
+                            target_table=referenced_table,
+                            from_col=from_col,
+                            db=DB_NAME,
+                        )
+    finally:
+        driver.close()
+
+    logger.info("Successfully exported table graph to Neo4j")
 
 
 def get_pinecone_index():
@@ -182,12 +278,15 @@ def get_pinecone_index():
 def index_metadata_in_pinecone(records):
     pinecone_records = [record for record in records if record["text"].strip()]
     if not pinecone_records:
-        print("No metadata descriptions found to index in Pinecone.")
+        logger.info("No metadata descriptions found to index in Pinecone.")
         return
+
+    logger.info("Indexing %d metadata records in Pinecone", len(pinecone_records))
 
     pinecone_client, pinecone_index = get_pinecone_index()
 
     for record_batch in chunked(pinecone_records, 96):
+        logger.debug("Generating embeddings for batch of %d records", len(record_batch))
         try:
             embeddings = pinecone_client.inference.embed(
                 model=PINECONE_EMBED_MODEL,
@@ -214,26 +313,33 @@ def index_metadata_in_pinecone(records):
 
         pinecone_index.upsert(vectors=vectors, namespace=PINECONE_NAMESPACE)
 
-    print(
-        f"Successfully indexed {len(pinecone_records)} metadata descriptions in Pinecone."
+    logger.info(
+        "Successfully indexed %d metadata descriptions in Pinecone",
+        len(pinecone_records),
     )
 
 
 def setup_and_import():
+    logger.info("Connecting to SQLite Cloud sources")
     metadata_conn = sqlitecloud.connect(metadata_conn_str)
     source_conn = sqlitecloud.connect(source_conn_str)
     table_descriptions = load_table_descriptions()
     pinecone_records = []
+    table_graph_rows = []
+
+    logger.info("Loaded table descriptions for %d tables", len(table_descriptions))
 
     metadata_conn.execute("DROP TABLE IF EXISTS column_metadata;")
     metadata_conn.execute("DROP TABLE IF EXISTS table_metadata;")
+    logger.info("Recreating metadata tables")
 
     metadata_conn.execute(
         """
         CREATE TABLE table_metadata (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             table_name TEXT NOT NULL UNIQUE,
-            description TEXT
+            description TEXT,
+            relationships TEXT
         );
         """
     )
@@ -262,17 +368,29 @@ def setup_and_import():
         ]
     )
 
+    logger.info("Found %d table CSV files in %s", len(csv_files), CSV_DIR)
+
     for filename in csv_files:
         table_name = filename.replace(".csv", "")
         table_description = table_descriptions.get(
             table_name, f"Formula 1 {table_name} records"
         )
+        table_relationships = fetch_table_relationships(source_conn, table_name)
+
+        logger.debug("Processing table %s from %s", table_name, filename)
 
         metadata_conn.execute(
-            "INSERT INTO table_metadata (table_name, description) VALUES (?, ?)",
-            (table_name, table_description),
+            "INSERT INTO table_metadata (table_name, description, relationships) VALUES (?, ?, ?)",
+            (table_name, table_description, json.dumps(table_relationships)),
         )
         pinecone_records.append(build_table_record(table_name, table_description))
+        table_graph_rows.append(
+            {
+                "table_name": table_name,
+                "description": table_description,
+                "relationships": table_relationships,
+            }
+        )
 
         cursor = metadata_conn.execute(
             "SELECT id FROM table_metadata WHERE table_name = ?", (table_name,)
@@ -316,17 +434,20 @@ def setup_and_import():
 
                 pinecone_records.append(build_column_record(table_name, cleaned_row))
 
+        logger.info("Imported table metadata for %s", table_name)
+
     metadata_conn.commit()
     metadata_conn.close()
     source_conn.close()
 
-    print(f"Successfully indexed {len(csv_files)} tables in SQLite Cloud.")
+    logger.info("Successfully indexed %d tables in SQLite Cloud", len(csv_files))
+    export_table_graph_to_neo4j(table_graph_rows)
     index_metadata_in_pinecone(pinecone_records)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python main.py <csv_directory>")
+        logger.error("Usage: python main.py <csv_directory>")
         sys.exit(1)
 
     CSV_DIR = sys.argv[1]

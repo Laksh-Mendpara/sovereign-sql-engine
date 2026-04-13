@@ -1,7 +1,15 @@
-import sqlitecloud
 import os
+import logging
+
+import sqlitecloud
 from dotenv import load_dotenv
 load_dotenv()
+
+logging.basicConfig(
+	level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+	format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Load values from environment
 host = os.getenv("SQLITE_HOST")
@@ -19,6 +27,6 @@ cursor = conn.execute("SELECT * FROM table_metadata")
 # cursor = conn.execute("PRAGMA database_list;")
 result = cursor.fetchone()
 
-print(result)
+logger.info("Connection test result: %s", result)
 
 conn.close()
