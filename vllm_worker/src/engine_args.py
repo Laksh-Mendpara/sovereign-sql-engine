@@ -378,10 +378,10 @@ def get_engine_args():
     if limit_mm_env is not None:
         args["limit_mm_per_prompt"] = convert_limit_mm_per_prompt(limit_mm_env)
 
-    # if args.get("TENSORIZER_URI"): TODO: add back once tensorizer is ready
-    #     args["load_format"] = "tensorizer"
-    #     args["model_loader_extra_config"] = TensorizerConfig(tensorizer_uri=args["TENSORIZER_URI"], num_readers=None)
-    #     logging.info(f"Using tensorized model from {args['TENSORIZER_URI']}")
+    if args.get("TENSORIZER_URI"):
+        args["load_format"] = "tensorizer"
+        args["model_loader_extra_config"] = TensorizerConfig(tensorizer_uri=args["TENSORIZER_URI"], num_readers=None)
+        logging.info(f"Using tensorized model from {args['TENSORIZER_URI']}")
 
     if "hf_overrides" in args:
         sanitized = _sanitize_hf_overrides(args["hf_overrides"])

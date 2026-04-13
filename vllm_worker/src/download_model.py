@@ -8,7 +8,7 @@ from utils import timer_decorator
 
 BASE_DIR = "/" 
 TOKENIZER_PATTERNS = [["*.json", "tokenizer*"]]
-MODEL_PATTERNS = [["*.safetensors"], ["*.bin"], ["*.pt"]]
+MODEL_PATTERNS = [["*.safetensors"], ["*.bin"], ["*.pt"], ["*.tensors"]]
 
 def setup_env():
     if os.getenv("TESTING_DOWNLOAD") == "1":
@@ -81,14 +81,11 @@ if __name__ == "__main__":
         "QUANTIZATION": os.getenv("QUANTIZATION"),
     }   
     
-    # if os.getenv("TENSORIZE") == "1": TODO: Add back once tensorizer is ready
-    #     serialized_uri, tensorizer_num_gpus, dtype = tensorize_model(model_path)
-    #     metadata.update({
-    #         "MODEL_NAME": serialized_uri,
-    #         "TENSORIZER_URI": serialized_uri,
-    #         "TENSOR_PARALLEL_SIZE": tensorizer_num_gpus,
-    #         "DTYPE": dtype
-    #     })
+    # Check for tensorizer downloaded model
+    tensor_files = glob.glob(os.path.join(model_path, "*.tensors"))
+    if tensor_files:
+        metadata["TENSORIZER_URI"] = tensor_files[0]
+
         
     tokenizer_path = download(tokenizer_name, tokenizer_revision, "tokenizer", cache_dir)
     metadata.update({
