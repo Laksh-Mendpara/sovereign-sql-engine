@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from .services.metadata_service import MetadataService
     from .services.neo4j_service import Neo4jService
     from .services.pinecone_service import PineconeService
+    from .services.sql_execution_service import SqlExecutionService
     from .services.runpod_service import RunpodService
 
 from .logic_models import (
@@ -63,6 +64,7 @@ from .models import (
     RetrievedTableSchema,
     StageMetrics,
 )
+from .sql_utils import plan_sql_execution
 
 logger = get_logger(__name__)
 
@@ -78,6 +80,7 @@ class AsyncPipelineExecutor:
         pinecone_service: PineconeService,
         neo4j_service: Neo4jService,
         metadata_service: MetadataService,
+        sql_execution_service: SqlExecutionService,
         runpod_service: RunpodService,
     ) -> None:
         self.cfg = settings
@@ -86,6 +89,7 @@ class AsyncPipelineExecutor:
         self.pinecone = pinecone_service
         self.neo4j = neo4j_service
         self.metadata = metadata_service
+        self.sql_executor = sql_execution_service
         self.runpod = runpod_service
         self.metrics: MetricsCollector = get_metrics()
 
@@ -210,6 +214,15 @@ class AsyncPipelineExecutor:
 
         runpod_response = await self._runpod(query, schema_sql, timer)
         generated_sql = self._extract_sql(runpod_response)
+        execution_plan = plan_sql_execution(generated_sql)
+        execution_data = None
+        if execution_plan.execution_sql and not execution_plan.blocked_by_firewall:
+            try:
+                execution_data = await self._execute_sql(execution_plan.execution_sql, timer)
+                if not execution_data:
+                    execution_data = None
+            except Exception as exc:
+                logger.warning("sql_execute.failed", extra={"error": str(exc)})
 
         return self._make_response(
             request_id=request_id, trace_id=trace_id, query=query,
@@ -217,7 +230,10 @@ class AsyncPipelineExecutor:
             cols=cols, tbls=tbls, selected=selected,
             schema_tables=schema_tables, schema_sql=schema_sql,
             runpod_response=runpod_response,
-            timer=timer, generated_sql=generated_sql,
+            timer=timer,
+            generated_sql=generated_sql,
+            execution_sql=execution_plan.execution_sql,
+            execution_data=execution_data,
         )
 
     # ── Task C: Retrieval Flow (Pipeline) ─────────────────────────────────────
@@ -344,6 +360,15 @@ class AsyncPipelineExecutor:
             logger.info("runpod.done", extra={"status": response.get("status", "unknown")})
             return response
 
+    async def _execute_sql(self, sql: str, timer: StageTimer) -> list[dict[str, Any]]:
+        logger.info("sql_execute.start")
+        result: list[dict[str, Any]] = await asyncio.wait_for(
+            asyncio.to_thread(self.sql_executor.execute, sql),
+            timeout=self.cfg.sqlite_query_timeout,
+        )
+        logger.info("sql_execute.done", extra={"row_count": len(result)})
+        return result
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -405,6 +430,8 @@ class AsyncPipelineExecutor:
         skipped: bool = False,
         skip_reason: str | None = None,
         generated_sql: str | None = None,
+        execution_sql: str | None = None,
+        execution_data: list[dict[str, Any]] | None = None,
     ) -> PipelineResponse:
         t = timer.as_dict()
         return PipelineResponse(
@@ -419,6 +446,8 @@ class AsyncPipelineExecutor:
             schema_tables=schema_tables,
             schema_sql=schema_sql,
             generated_sql=generated_sql,
+            execution_sql=execution_sql,
+            execution_data=execution_data,
             runpod_response=runpod_response,
             metrics=StageMetrics(
                 guard_ms=t.get("guard_ms"),

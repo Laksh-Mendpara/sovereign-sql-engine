@@ -90,6 +90,8 @@ class PipelineResponse(BaseModel):
     schema_tables: list[str]
     schema_sql: str
     generated_sql: Optional[str] = None
+    execution_sql: Optional[str] = None
+    execution_data: Optional[list[dict[str, Any]]] = None
     runpod_response: dict[str, Any]
 
     # Observability
@@ -179,6 +181,19 @@ class SSERunpodPayload(BaseModel):
     latency_ms: float
 
 
+class SSEExecutionRemarkPayload(BaseModel):
+    """Emitted after RunPod, before execution data."""
+    remark: str
+    execution_sql: Optional[str] = None
+    blocked_by_firewall: bool = False
+
+
+class SSEExecutionDataPayload(BaseModel):
+    """Emitted after the execution remark with fetched rows, if any."""
+    execution_sql: Optional[str] = None
+    execution_data: Optional[list[dict[str, Any]]] = None
+
+
 class SSECompletePayload(BaseModel):
     """Final event — always emitted, even on early-exit (guard/out_of_topic)."""
     skipped: bool = False
@@ -190,4 +205,3 @@ class SSEErrorPayload(BaseModel):
     """Emitted on timeout or unrecoverable error."""
     error: str
     detail: str
-

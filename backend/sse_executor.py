@@ -12,6 +12,8 @@ Event sequence
   neo4j                 → when Neo4j expansion completes (Task C, step 2)
   schema                → when metadata schema SQL is ready (Task C, step 3)
   runpod                → when Arctic SQL generation completes (final step)
+  execution.remark      → firewall / limit remark for execution SQL
+  execution.data        → fetched rows from the SQLite data DB
   pipeline.complete     → always the last event (even on early-exit)
 
   On any unrecoverable error:
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from .services.metadata_service import MetadataService
     from .services.neo4j_service import Neo4jService
     from .services.pinecone_service import PineconeService
+    from .services.sql_execution_service import SqlExecutionService
     from .services.runpod_service import RunpodService
 
 from .logic_models import (
@@ -54,6 +57,8 @@ from .metrics import (
 from .models import (
     ClassificationResultSchema,
     GuardResultSchema,
+    SSEExecutionDataPayload,
+    SSEExecutionRemarkPayload,
     RetrievedColumnSchema,
     RetrievedTableSchema,
     SSEClassificationPayload,
@@ -67,6 +72,7 @@ from .models import (
     SSEStartPayload,
     StageMetrics,
 )
+from .sql_utils import plan_sql_execution
 
 logger = get_logger(__name__)
 
@@ -90,6 +96,7 @@ class SSEPipelineExecutor:
         pinecone_service: PineconeService,
         neo4j_service: Neo4jService,
         metadata_service: MetadataService,
+        sql_execution_service: SqlExecutionService,
         runpod_service: RunpodService,
     ) -> None:
         self.cfg = settings
@@ -98,6 +105,7 @@ class SSEPipelineExecutor:
         self.pinecone = pinecone_service
         self.neo4j = neo4j_service
         self.metadata = metadata_service
+        self.sql_executor = sql_execution_service
         self.runpod = runpod_service
         self.metrics: MetricsCollector = get_metrics()
 
@@ -447,6 +455,33 @@ class SSEPipelineExecutor:
             runpod_response=response,
             latency_ms=elapsed,
         ))
+        execution_plan = plan_sql_execution(generated_sql)
+        emit("execution.remark", SSEExecutionRemarkPayload(
+            remark=execution_plan.remark,
+            execution_sql=execution_plan.execution_sql,
+            blocked_by_firewall=execution_plan.blocked_by_firewall,
+        ))
+        execution_data = None
+        if execution_plan.execution_sql and not execution_plan.blocked_by_firewall:
+            try:
+                execution_data = await self._execute_sql(execution_plan.execution_sql)
+                if not execution_data:
+                    execution_data = None
+            except Exception as exc:
+                logger.warning("sse.sql_execute.failed", extra={"error": str(exc)})
+        emit("execution.data", SSEExecutionDataPayload(
+            execution_sql=execution_plan.execution_sql,
+            execution_data=execution_data,
+        ))
+
+    async def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
+        logger.info("sse.sql_execute.start")
+        result: list[dict[str, Any]] = await asyncio.wait_for(
+            asyncio.to_thread(self.sql_executor.execute, sql),
+            timeout=self.cfg.sqlite_query_timeout,
+        )
+        logger.info("sse.sql_execute.done", extra={"row_count": len(result)})
+        return result
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

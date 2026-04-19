@@ -31,6 +31,7 @@ from .services.metadata_service import MetadataService
 from .services.modal_chat import ModalChatClient
 from .services.neo4j_service import Neo4jService
 from .services.pinecone_service import PineconeService
+from .services.sql_execution_service import SqlExecutionService
 from .services.runpod_service import RunpodService
 
 from .config import BackendSettings, get_settings
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "guard_service": GuardService(guard_client, logger),
             "classifier_service": ClassifierService(classifier_client, logger),
             "metadata_service": MetadataService(settings.sqlite_conn_str, logger),
+            "sql_execution_service": SqlExecutionService(settings.sqlite_data_conn_str, logger),
             "pinecone_service": PineconeService(
                 api_key=settings.pinecone_api_key,
                 index_name=settings.pinecone_index_name,
@@ -103,7 +105,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("shutdown.begin")
 
     def _cleanup() -> None:
-        for name, closer in [("neo4j", "neo4j_service"), ("metadata", "metadata_service")]:
+        for name, closer in [
+            ("neo4j", "neo4j_service"),
+            ("metadata", "metadata_service"),
+            ("sqlite_data", "sql_execution_service"),
+        ]:
             try:
                 getattr(svcs[closer], "close")()
                 log.info(f"shutdown.{name}_closed")

@@ -8,6 +8,7 @@ from ..services.guard_service import GuardService
 from ..services.metadata_service import MetadataService
 from ..services.neo4j_service import Neo4jService
 from ..services.pinecone_service import PineconeService
+from ..services.sql_execution_service import SqlExecutionService
 from ..services.runpod_service import RunpodService
 
 from ..config import BackendSettings
@@ -17,6 +18,7 @@ from ..dependencies import (
     get_metadata_service,
     get_neo4j_service,
     get_pinecone_service,
+    get_sql_execution_service,
     get_runpod_service,
     get_settings,
 )
@@ -59,6 +61,7 @@ async def run_pipeline(
     pinecone_svc: PineconeService = Depends(get_pinecone_service),
     neo4j_svc: Neo4jService = Depends(get_neo4j_service),
     metadata_svc: MetadataService = Depends(get_metadata_service),
+    sql_execution_svc: SqlExecutionService = Depends(get_sql_execution_service),
     runpod_svc: RunpodService = Depends(get_runpod_service),
 ) -> PipelineResponse:
     # Pull correlation IDs set by RequestContextMiddleware
@@ -84,6 +87,7 @@ async def run_pipeline(
         pinecone_service=pinecone_svc,
         neo4j_service=neo4j_svc,
         metadata_service=metadata_svc,
+        sql_execution_service=sql_execution_svc,
         runpod_service=runpod_svc,
     )
 
@@ -137,6 +141,8 @@ async def run_pipeline(
         "| `neo4j` | Join expansion done | `schema_tables`, `latency_ms` |\n"
         "| `schema` | Schema SQL ready | `schema_sql`, `latency_ms` |\n"
         "| `runpod` | SQL generated | `generated_sql`, `latency_ms` |\n"
+        "| `execution.remark` | Execution policy applied | `remark`, `execution_sql`, `blocked_by_firewall` |\n"
+        "| `execution.data` | Fetched rows returned | `execution_sql`, `execution_data` |\n"
         "| `pipeline.complete` | All done (or early exit) | `metrics`, `skipped` |\n"
         "| `pipeline.error` | Unrecoverable error | `error`, `detail` |\n\n"
         "Use `curl -N` to see events as they stream:\n"
@@ -160,6 +166,7 @@ async def stream_pipeline(
     pinecone_svc: PineconeService = Depends(get_pinecone_service),
     neo4j_svc: Neo4jService = Depends(get_neo4j_service),
     metadata_svc: MetadataService = Depends(get_metadata_service),
+    sql_execution_svc: SqlExecutionService = Depends(get_sql_execution_service),
     runpod_svc: RunpodService = Depends(get_runpod_service),
 ) -> EventSourceResponse:
     request_id: str = getattr(request.state, "request_id", None) or get_request_id()
@@ -183,6 +190,7 @@ async def stream_pipeline(
         pinecone_service=pinecone_svc,
         neo4j_service=neo4j_svc,
         metadata_service=metadata_svc,
+        sql_execution_service=sql_execution_svc,
         runpod_service=runpod_svc,
     )
 
@@ -212,4 +220,3 @@ async def stream_pipeline(
             "X-Accel-Buffering": "no",   # Disable Nginx buffering for SSE
         },
     )
-

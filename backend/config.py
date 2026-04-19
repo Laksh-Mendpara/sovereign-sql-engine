@@ -11,7 +11,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve path: backend/ → ../ → pipeline_test/.env
-_ENV_FILE = os.path.join(os.path.dirname(__file__), "..", "pipeline_test", ".env")
+_ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 
 
 class BackendSettings(BaseSettings):
@@ -38,6 +38,7 @@ class BackendSettings(BaseSettings):
     pinecone_timeout: float = Field(default=45.0, alias="PINECONE_TIMEOUT")
     neo4j_timeout: float = Field(default=30.0, alias="NEO4J_TIMEOUT")
     metadata_timeout: float = Field(default=20.0, alias="METADATA_TIMEOUT")
+    sqlite_query_timeout: float = Field(default=20.0, alias="SQLITE_QUERY_TIMEOUT")
     runpod_timeout: float = Field(default=360.0, alias="RUNPOD_TIMEOUT")
     total_pipeline_timeout: float = Field(default=420.0, alias="PIPELINE_TIMEOUT")
 
@@ -45,6 +46,7 @@ class BackendSettings(BaseSettings):
     db_name: str = Field(alias="DB_NAME")
     sqlite_host: str = Field(alias="SQLITE_HOST")
     sqlite_port: str = Field(alias="SQLITE_PORT")
+    sqlite_db: str = Field(alias="SQLITE_DB")
     sqlite_metadata_db: str = Field(alias="SQLITE_METADATA_DB")
     sqlite_api_key: str = Field(alias="SQLITE_API_KEY")
 
@@ -92,6 +94,13 @@ class BackendSettings(BaseSettings):
         return (
             f"sqlitecloud://{self.sqlite_host}:{self.sqlite_port}/"
             f"{self.sqlite_metadata_db}?apikey={self.sqlite_api_key}"
+        )
+
+    @property
+    def sqlite_data_conn_str(self) -> str:
+        return (
+            f"sqlitecloud://{self.sqlite_host}:{self.sqlite_port}/"
+            f"{self.sqlite_db}?apikey={self.sqlite_api_key}"
         )
 
     @property

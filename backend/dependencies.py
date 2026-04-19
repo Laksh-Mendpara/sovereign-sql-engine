@@ -14,6 +14,7 @@ from .services.guard_service import GuardService
 from .services.metadata_service import MetadataService
 from .services.neo4j_service import Neo4jService
 from .services.pinecone_service import PineconeService
+from .services.sql_execution_service import SqlExecutionService
 from .services.runpod_service import RunpodService
 
 from .config import BackendSettings
@@ -41,6 +42,10 @@ def get_neo4j_service(request: Request) -> Neo4jService:
 
 def get_metadata_service(request: Request) -> MetadataService:
     return request.app.state.metadata_service  # type: ignore[return-value]
+
+
+def get_sql_execution_service(request: Request) -> SqlExecutionService:
+    return request.app.state.sql_execution_service  # type: ignore[return-value]
 
 
 def get_runpod_service(request: Request) -> RunpodService:
