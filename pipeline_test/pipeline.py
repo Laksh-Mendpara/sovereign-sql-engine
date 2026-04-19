@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import logging
 
-from text2sql_pipeline_check.config import Settings
-from text2sql_pipeline_check.models import PipelineResult
-from text2sql_pipeline_check.prompts import build_arctic_runpod_input
-from text2sql_pipeline_check.services.classifier_service import ClassifierService
-from text2sql_pipeline_check.services.guard_service import GuardService
-from text2sql_pipeline_check.services.metadata_service import MetadataService
-from text2sql_pipeline_check.services.modal_chat import ModalChatClient
-from text2sql_pipeline_check.services.neo4j_service import Neo4jService
-from text2sql_pipeline_check.services.pinecone_service import PineconeService
-from text2sql_pipeline_check.services.runpod_service import RunpodService
+from pipeline_test.config import Settings
+from pipeline_test.models import PipelineResult
+from pipeline_test.prompts import build_arctic_runpod_input
+from pipeline_test.services.classifier_service import ClassifierService
+from pipeline_test.services.guard_service import GuardService
+from pipeline_test.services.metadata_service import MetadataService
+from pipeline_test.services.modal_chat import ModalChatClient
+from pipeline_test.services.neo4j_service import Neo4jService
+from pipeline_test.services.pinecone_service import PineconeService
+from pipeline_test.services.runpod_service import RunpodService
 
 
 class PipelineChecker:

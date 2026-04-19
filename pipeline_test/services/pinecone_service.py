@@ -6,7 +6,7 @@ import logging
 
 from pinecone import Pinecone
 
-from text2sql_pipeline_check.models import RetrievedColumn, RetrievedTable
+from pipeline_test.models import RetrievedColumn, RetrievedTable
 
 from .metadata_service import MetadataService
 

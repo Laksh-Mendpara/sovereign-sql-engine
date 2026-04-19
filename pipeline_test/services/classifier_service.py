@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from text2sql_pipeline_check.models import ClassificationResult
-from text2sql_pipeline_check.prompts import build_classifier_messages, parse_classifier_json
+from pipeline_test.models import ClassificationResult
+from pipeline_test.prompts import build_classifier_messages, parse_classifier_json
 
 from .modal_chat import ModalChatClient
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 
-from text2sql_pipeline_check.config import load_settings
-from text2sql_pipeline_check.logging_utils import configure_logging
-from text2sql_pipeline_check.pipeline import PipelineChecker
+from pipeline_test.config import load_settings
+from pipeline_test.logging_utils import configure_logging
+from pipeline_test.pipeline import PipelineChecker
 
 
 def parse_args() -> argparse.Namespace:

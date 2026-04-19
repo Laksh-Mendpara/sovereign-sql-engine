@@ -12,5 +12,5 @@ Standalone pipeline checker for:
 Run from the repo root:
 
 ```bash
-python -m text2sql_pipeline_check.main "your natural language query"
+python -m pipeline_test.main "your natural language query"
 ```

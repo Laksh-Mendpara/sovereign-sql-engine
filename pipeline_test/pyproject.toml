@@ -11,3 +11,11 @@ dependencies = [
     "sqlitecloud>=0.0.84",
 ]
 
+[project.scripts]
+pipeline-check = "pipeline_test.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pipeline_test*"]
+
+

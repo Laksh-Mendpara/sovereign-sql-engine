@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import re
 
-from text2sql_pipeline_check.models import GuardResult
-from text2sql_pipeline_check.prompts import build_guard_messages, parse_guard_response
+from pipeline_test.models import GuardResult
+from pipeline_test.prompts import build_guard_messages, parse_guard_response
 
 from .modal_chat import ModalChatClient
 

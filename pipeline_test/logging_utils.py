@@ -13,5 +13,5 @@ def configure_logging() -> logging.Logger:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stdout,
     )
-    return logging.getLogger("text2sql_pipeline_check")
+    return logging.getLogger("pipeline_test")
 
