@@ -20,7 +20,6 @@ ARG VLLM_NIGHTLY="false"
 ARG MAX_MODEL_LEN=""
 ARG ENFORCE_EAGER=""
 
-<<<<<<< Updated upstream
 ENV MODEL_NAME=$MODEL_NAME \
     MODEL_REVISION=$MODEL_REVISION \
     TOKENIZER_NAME=$TOKENIZER_NAME \
@@ -32,10 +31,6 @@ ENV MODEL_NAME=$MODEL_NAME \
     HF_DATASETS_CACHE="${BASE_PATH}/huggingface-cache/datasets" \
     HUGGINGFACE_HUB_CACHE="${BASE_PATH}/huggingface-cache/hub" \
     HF_HOME="${BASE_PATH}/huggingface-cache/hub" \
-=======
-ENV HF_HUB_OFFLINE=0 \
-    TRANSFORMERS_OFFLINE=0 \
->>>>>>> Stashed changes
     HF_HUB_ENABLE_HF_TRANSFER=0 \
     HF_HOME=/runpod-volume/huggingface-cache \
     HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub \
