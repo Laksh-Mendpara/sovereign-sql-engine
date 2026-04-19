@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from pipeline_test.models import ClassificationResult
 from pipeline_test.prompts import build_classifier_messages, parse_classifier_json
@@ -15,7 +16,36 @@ class ClassifierService:
         self.client = client
         self.logger = logger
 
+    @staticmethod
+    def _looks_obviously_out_of_topic(query: str) -> bool:
+        lowered = query.lower()
+        math_pattern = r"\b\d+\s*[\+\-\*/x×]\s*\d+\b"
+        db_keywords = (
+            "sql",
+            "select",
+            "from",
+            "where",
+            "join",
+            "group by",
+            "order by",
+            "database",
+            "table",
+            "column",
+            "rows",
+        )
+        return bool(re.search(math_pattern, lowered)) and not any(
+            keyword in lowered for keyword in db_keywords
+        )
+
     def classify(self, query: str) -> ClassificationResult:
+        if self._looks_obviously_out_of_topic(query):
+            self.logger.info("Classified query as out_of_topic via heuristic")
+            return ClassificationResult(
+                label="out_of_topic",
+                reason="Arithmetic question, not a database query",
+                raw_response="heuristic: arithmetic question",
+            )
+
         self.logger.info("Classifying query difficulty/topic")
         raw = self.client.chat(build_classifier_messages(query), max_tokens=128, temperature=0.0)
         self.logger.debug("Classifier response: %s", raw)

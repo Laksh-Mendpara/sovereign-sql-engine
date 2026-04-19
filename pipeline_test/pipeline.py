@@ -7,6 +7,7 @@ import logging
 from pipeline_test.config import Settings
 from pipeline_test.models import PipelineResult
 from pipeline_test.prompts import build_arctic_runpod_input
+from pipeline_test.sql_utils import plan_sql_execution
 from pipeline_test.services.classifier_service import ClassifierService
 from pipeline_test.services.guard_service import GuardService
 from pipeline_test.services.metadata_service import MetadataService
@@ -121,6 +122,8 @@ class PipelineChecker:
             len(schema_sql),
         )
         runpod_response = self.runpod_service.run_request(runpod_payload)
+        generated_sql = self._extract_sql(runpod_response)
+        execution_plan = plan_sql_execution(generated_sql)
 
         return PipelineResult(
             query=query,
@@ -131,5 +134,50 @@ class PipelineChecker:
             selected_tables=selected_tables,
             schema_tables=schema_tables,
             schema_sql=schema_sql,
+            generated_sql=generated_sql,
+            execution_sql=execution_plan.execution_sql,
+            execution_data=None,
             runpod_response=runpod_response,
         )
+
+    @staticmethod
+    def _extract_sql(runpod_response: dict) -> str | None:
+        raw_text = None
+        try:
+            output = runpod_response.get("output")
+            if isinstance(output, list) and len(output) > 0:
+                first_item = output[0]
+                if isinstance(first_item, dict):
+                    choices = first_item.get("choices", [])
+                    if choices and isinstance(choices[0], dict):
+                        tokens = choices[0].get("tokens", [])
+                        if tokens and isinstance(tokens, list):
+                            raw_text = "".join(tokens)
+                        elif choices[0].get("text"):
+                            raw_text = choices[0].get("text")
+            elif isinstance(output, dict):
+                choices = output.get("choices", [])
+                if choices and isinstance(choices[0], dict):
+                    msg = choices[0].get("message", {})
+                    if isinstance(msg, dict) and msg.get("content"):
+                        raw_text = msg.get("content")
+                    elif choices[0].get("tokens") and isinstance(choices[0].get("tokens"), list):
+                        raw_text = "".join(choices[0].get("tokens", []))
+                    elif choices[0].get("text"):
+                        raw_text = choices[0].get("text")
+            elif isinstance(output, str):
+                raw_text = output
+        except Exception:
+            pass
+
+        if not raw_text:
+            return None
+
+        raw_text = raw_text.strip()
+        import re
+
+        match = re.search(r"```(?:sql)?\s*(.*?)\s*```", raw_text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+        return raw_text or None

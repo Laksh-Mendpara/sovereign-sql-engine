@@ -44,7 +44,9 @@ class PipelineResult:
     schema_tables: list[str]
     schema_sql: str
     runpod_response: dict
+    generated_sql: str | None = None
+    execution_sql: str | None = None
+    execution_data: list[dict] | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
-
