@@ -6,7 +6,7 @@ Complete guide to all environment variables and configuration options for worker
 
 | Variable                       | Default             | Type/Choices                                                | Description                                                                     |
 | ------------------------------ | ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `MODEL_NAME`                   | 'facebook/opt-125m' | `str`                                                       | Name or path of the Hugging Face model to use.                                  |
+| `MODEL_NAME`                   | 'facebook/opt-125m' | `str`                                                       | Name or path of the Hugging Face model to use. Cached RunPod snapshots are used automatically when present. |
 | `MODEL_REVISION`               | 'main'              | `str`                                                       | Model revision to load (default: main).                                         |
 | `TOKENIZER`                    | None                | `str`                                                       | Name or path of the Hugging Face tokenizer to use.                              |
 | `SKIP_TOKENIZER_INIT`          | False               | `bool`                                                      | Skip initialization of tokenizer and detokenizer.                               |
@@ -15,6 +15,7 @@ Complete guide to all environment variables and configuration options for worker
 | `DOWNLOAD_DIR`                 | None                | `str`                                                       | Directory to download and load the weights.                                     |
 | `LOAD_FORMAT`                  | 'auto'              | `str`                                                       | The format of the model weights to load.                                        |
 | `HF_TOKEN`                     | -                   | `str`                                                       | Hugging Face token for private and gated models.                                |
+| `HF_HUB_OFFLINE`               | `0`                 | `bool`                                                      | Disable Hugging Face Hub network access; set to `1` for strict offline mode.    |
 | `DTYPE`                        | 'auto'              | ['auto', 'half', 'float16', 'bfloat16', 'float', 'float32'] | Data type for model weights and activations.                                    |
 | `KV_CACHE_DTYPE`               | 'auto'              | ['auto', 'fp8']                                             | Data type for KV cache storage.                                                 |
 | `QUANTIZATION_PARAM_PATH`      | None                | `str`                                                       | Path to the JSON file containing the KV cache scaling factors.                  |
@@ -181,12 +182,10 @@ Any vLLM `AsyncEngineArgs` field can be set via an environment variable using th
 
 ## Docker Build Arguments
 
-These variables are used when building custom Docker images with models baked in:
+The worker image no longer bakes models into the container at build time.
+Build the image normally and provide model settings at runtime through environment variables.
 
-| Variable              | Default          | Type  | Description                                       |
-| --------------------- | ---------------- | ----- | ------------------------------------------------- |
-| `BASE_PATH`           | `/runpod-volume` | `str` | Storage directory for huggingface cache and model |
-| `WORKER_CUDA_VERSION` | `12.1.0`         | `str` | CUDA version for the worker image                 |
+This worker is tuned for RunPod model caching and will prefer local snapshots under `/runpod-volume/huggingface-cache/hub` when they exist. If no cached snapshot is present, it will download the model from Hugging Face and store it on the mounted disk for future runs.
 
 ## Deprecated Variables
 

@@ -4,7 +4,6 @@ import logging
 from typing import get_origin, get_args
 from torch.cuda import device_count
 from vllm import AsyncEngineArgs
-from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from src.utils import convert_limit_mm_per_prompt
 
 # Backward-compat: env var names users already know → engine arg name
@@ -36,8 +35,9 @@ DEFAULT_ARGS = {
     "cpu_offload_gb": 0,
     "max_num_seqs": 256,
     "max_logprobs": 20,
-    "enforce_eager": False,
-    "max_seq_len_to_capture": 8192,
+    "enforce_eager": True,
+    "max_model_len": 4096,
+    "max_seq_len_to_capture": 4096,
     "disable_custom_all_reduce": False,
     "tokenizer_pool_size": 0,
     "tokenizer_pool_type": "ray",
@@ -57,7 +57,6 @@ DEFAULT_ARGS = {
     "guided_decoding_backend": "outlines",
     "spec_decoding_acceptance_method": "rejection_sampler",
     "stream_interval": 1,
-
 }
 
 
@@ -274,16 +273,40 @@ def _resolve_max_model_len(model, trust_remote_code=False, revision=None):
     return None
 
 
-def _local_args_to_engine_args(local: dict) -> dict:
-    """Map local args (e.g. from /local_model_args.json) to engine arg names and filter."""
-    valid = AsyncEngineArgs.__dataclass_fields__
-    out = {}
-    for k, v in local.items():
-        target = ENV_ALIASES.get(k, k.lower().replace("-", "_"))
-        if target not in valid or v in (None, "", "None"):
-            continue
-        out[target] = v
-    return out
+def _resolve_cached_snapshot_path(model_id: str, cache_root: str | None = None) -> str | None:
+    """Resolve a Hugging Face snapshot path from the local RunPod cache if available."""
+    if not model_id or "/" not in model_id:
+        return None
+
+    if os.path.isdir(model_id):
+        return model_id
+
+    cache_root = cache_root or os.getenv("HUGGINGFACE_HUB_CACHE") or "/runpod-volume/huggingface-cache/hub"
+    org, name = model_id.split("/", 1)
+    model_root = os.path.join(cache_root, f"models--{org}--{name}")
+    refs_main = os.path.join(model_root, "refs", "main")
+    snapshots_dir = os.path.join(model_root, "snapshots")
+
+    if os.path.isfile(refs_main):
+        with open(refs_main, "r") as f:
+            snapshot_hash = f.read().strip()
+        candidate = os.path.join(snapshots_dir, snapshot_hash)
+        if os.path.isdir(candidate):
+            logging.info("Resolved cached snapshot for %s: %s", model_id, candidate)
+            return candidate
+
+    if not os.path.isdir(snapshots_dir):
+        return None
+
+    versions = [
+        d for d in os.listdir(snapshots_dir) if os.path.isdir(os.path.join(snapshots_dir, d))
+    ]
+    if not versions:
+        return None
+    versions.sort()
+    chosen = os.path.join(snapshots_dir, versions[0])
+    logging.info("Resolved fallback cached snapshot for %s: %s", model_id, chosen)
+    return chosen
 
 
 def _sanitize_hf_overrides(hf_overrides: dict) -> dict | None:
@@ -330,27 +353,6 @@ def _sanitize_hf_overrides(hf_overrides: dict) -> dict | None:
     return result or None
 
 
-def get_local_args():
-    """
-    Retrieve local arguments from a JSON file.
-
-    Returns:
-        dict: Local arguments.
-    """
-    if not os.path.exists("/local_model_args.json"):
-        return {}
-
-    with open("/local_model_args.json", "r") as f:
-        local_args = json.load(f)
-
-    if local_args.get("MODEL_NAME") is None:
-        logging.warning("Model name not found in /local_model_args.json. There maybe was a problem when baking the model in.")
-
-    logging.info(f"Using baked in model with args: {local_args}")
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_HUB_OFFLINE"] = "1"
-
-    return local_args
 def get_engine_args():
     # Start with worker custom defaults (only where we differ from vLLM)
     args = dict(DEFAULT_ARGS)
@@ -361,10 +363,25 @@ def get_engine_args():
     # Backward-compat aliases (MODEL_NAME → model, etc.)
     _apply_env_aliases(args)
 
-    # Local baked-in model overrides
-    local = get_local_args()
-    if local:
-        args.update(_local_args_to_engine_args(local))
+    original_model_name = args.get("model")
+
+    # Prefer RunPod model-cache snapshots when available so vLLM never hits the network.
+    cached_model = _resolve_cached_snapshot_path(args.get("model"))
+    if cached_model:
+        args["model"] = cached_model
+        if original_model_name:
+            args["served_model_name"] = original_model_name
+
+    if args.get("tokenizer"):
+        cached_tokenizer = _resolve_cached_snapshot_path(args.get("tokenizer"))
+        if cached_tokenizer:
+            args["tokenizer"] = cached_tokenizer
+    elif cached_model:
+        args["tokenizer"] = cached_model
+
+    if cached_model:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     # Filter to valid engine args and drop sentinel empty values
     valid_fields = AsyncEngineArgs.__dataclass_fields__

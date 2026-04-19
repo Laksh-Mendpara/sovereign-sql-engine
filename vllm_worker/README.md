@@ -11,11 +11,6 @@ Deploy OpenAI-Compatible Blazing-Fast LLM Endpoints powered by the [vLLM](https:
 - [Setting up the Serverless Worker](#setting-up-the-serverless-worker)
   - [Option 1: Deploy Any Model Using Pre-Built Docker Image [Recommended]](#option-1-deploy-any-model-using-pre-built-docker-image-recommended)
     - [Configuration](#configuration)
-  - [Option 2: Build Docker Image with Model Inside](#option-2-build-docker-image-with-model-inside)
-    - [Prerequisites](#prerequisites)
-    - [Arguments](#arguments)
-    - [Example: Building an image with OpenChat-3.5](#example-building-an-image-with-openchat-35)
-      - [(Optional) Including Huggingface Token](#optional-including-huggingface-token)
   - [Compatible Model Architectures](#compatible-model-architectures)
 - [Usage: OpenAI Compatibility](#usage-openai-compatibility)
   - [Modifying your OpenAI Codebase to use your deployed vLLM Worker](#modifying-your-openai-codebase-to-use-your-deployed-vllm-worker)
@@ -46,8 +41,9 @@ Configure worker-vllm using environment variables:
 
 | Environment Variable                | Description                                       | Default             | Options                                                            |
 | ----------------------------------- | ------------------------------------------------- | ------------------- | ------------------------------------------------------------------ |
-| `MODEL_NAME`                        | Path of the model weights                         | "facebook/opt-125m" | Local folder or Hugging Face repo ID                               |
+| `MODEL_NAME`                        | Path of the model weights                         | "facebook/opt-125m" | Hugging Face repo ID or local path; cached snapshots are used automatically |
 | `HF_TOKEN`                          | HuggingFace access token for gated/private models |                     | Your HuggingFace access token                                      |
+| `HF_HUB_OFFLINE`                    | Disable Hugging Face Hub network access           | `0`                 | `1` forces offline mode; `0` lets it download on cache miss        |
 | `MAX_MODEL_LEN`                     | Model's maximum context length                    |                     | Integer (e.g., 4096)                                               |
 | `QUANTIZATION`                      | Quantization method                               |                     | "awq", "gptq", "squeezellm", "bitsandbytes"                        |
 | `TENSOR_PARALLEL_SIZE`              | Number of GPUs                                    | 1                   | Integer                                                            |
@@ -69,72 +65,9 @@ Configure worker-vllm using environment variables:
 
 Any env var whose name matches a valid `AsyncEngineArgs` field (uppercased) is applied automatically. Backward-compat aliases: `MODEL_NAME`, `TOKENIZER_NAME`, `MAX_CONTEXT_LEN_TO_CAPTURE`. This lets you configure any vLLM option without waiting for explicit worker support.
 
+This image is tuned for RunPod model caching. The worker looks for cached Hugging Face snapshots under `/runpod-volume/huggingface-cache/hub` and loads the local snapshot directly when it exists. If the snapshot is missing, it falls back to downloading from Hugging Face at runtime. The cache stays on the mounted disk so subsequent startups are fast.
+
 For the complete list of all available environment variables, examples, and detailed descriptions: **[Configuration](docs/configuration.md)**
-
-## Option 2: Build Docker Image with Model Inside
-
-To build an image with the model baked in, you must specify the following docker arguments when building the image.
-
-### Prerequisites
-
-- Docker
-
-### Arguments
-
-- **Required**
-  - `MODEL_NAME`
-- **Optional**
-  - `MODEL_REVISION`: Model revision to load (default: `main`).
-  - `BASE_PATH`: Storage directory where huggingface cache and model will be located. (default: `/runpod-volume`, which will utilize network storage if you attach it or create a local directory within the image if you don't. If your intention is to bake the model into the image, you should set this to something like `/models` to make sure there are no issues if you were to accidentally attach network storage.)
-  - `QUANTIZATION`
-  - `WORKER_CUDA_VERSION`: `12.1.0` (`12.1.0` is recommended for optimal performance).
-  - `TOKENIZER_NAME`: Tokenizer repository if you would like to use a different tokenizer than the one that comes with the model. (default: `None`, which uses the model's tokenizer)
-  - `TOKENIZER_REVISION`: Tokenizer revision to load (default: `main`).
-  - `VLLM_NIGHTLY`: Set to `true` to replace the pinned vLLM release with the latest nightly build and the latest `transformers` from source. Useful for testing unreleased vLLM features. (default: `false`)
-
-For the remaining settings, you may apply them as environment variables when running the container. Supported environment variables are listed in the [Environment Variables](#environment-variables) section.
-
-### Example: Building an image with OpenChat-3.5
-
-```bash
-docker build -t username/image:tag --build-arg MODEL_NAME="openchat/openchat_3.5" --build-arg BASE_PATH="/models" .
-```
-
-### Example: Building with vLLM Nightly
-
-To use the latest unreleased vLLM build (installs from the nightly wheel index and `transformers` from source):
-
-```bash
-docker build -t username/image:tag --build-arg VLLM_NIGHTLY=true .
-```
-
-You can combine it with other arguments:
-
-```bash
-docker build -t username/image:tag --build-arg VLLM_NIGHTLY=true --build-arg MODEL_NAME="meta-llama/Llama-3.1-8B-Instruct" --build-arg BASE_PATH="/models" .
-```
-
-### (Optional) Including Huggingface Token
-
-If the model you would like to deploy is private or gated, you will need to include it during build time as a Docker secret, which will protect it from being exposed in the image and on DockerHub.
-
-1. Enable Docker BuildKit (required for secrets).
-
-```bash
-export DOCKER_BUILDKIT=1
-```
-
-2. Export your Hugging Face token as an environment variable
-
-```bash
-export HF_TOKEN="your_token_here"
-```
-
-2. Add the token as a secret when building
-
-```bash
-docker build -t username/image:tag --secret id=HF_TOKEN --build-arg MODEL_NAME="openchat/openchat_3.5" .
-```
 
 # Compatible Model Architectures
 

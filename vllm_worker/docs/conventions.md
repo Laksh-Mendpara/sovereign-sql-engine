@@ -44,7 +44,7 @@ RunPod Request → handler.py → JobInput → Engine Selection → vLLM Generat
 #### Environment-Based Configuration:
 
 - **Single Source of Truth**: All configuration via environment variables
-- **Hierarchical Loading**: `DEFAULT_ARGS` → `os.environ` → `local_model_args.json` (for baked models)
+- **Hierarchical Loading**: `DEFAULT_ARGS` → `os.environ`
 - **vLLM Argument Mapping**: Automatic translation of env vars to vLLM `AsyncEngineArgs`
 
 #### Key Configuration Files:
@@ -64,13 +64,6 @@ RunPod Request → handler.py → JobInput → Engine Selection → vLLM Generat
 - **Configuration**: Entirely via environment variables
 - **Model Loading**: Downloads model at runtime from Hugging Face
 - **Use Case**: Quick deployment, model experimentation
-
-#### Option 2: Baked Model Images
-
-- **Build Process**: Model downloaded during Docker build
-- **Storage**: Model embedded in container image
-- **Configuration**: Stored in `/local_model_args.json`
-- **Use Case**: Production deployments, faster cold starts
 
 ### 2. **Request Processing Patterns**
 
@@ -119,7 +112,6 @@ src/
 ├── utils.py           # Request parsing & utilities
 ├── tokenizer.py       # Tokenizer wrapper
 ├── constants.py       # Default constants
-└── download_model.py  # Model downloading logic
 ```
 
 #### Separation of Concerns:
@@ -163,15 +155,7 @@ src/
 
 - **Base**: CUDA runtime environment
 - **Dependencies**: Python packages and vLLM
-- **Model Download**: Optional model baking stage
 - **Runtime**: Final application layer
-
-#### Build Arguments:
-
-- **MODEL_NAME**: Primary model identifier
-- **BASE_PATH**: Storage location strategy
-- **QUANTIZATION**: Optimization settings
-- **WORKER_CUDA_VERSION**: CUDA compatibility
 
 #### CI/CD Strategy:
 
@@ -182,7 +166,7 @@ src/
 #### Docker Bake Configuration:
 
 - **File**: `docker-bake.hcl` (flexible variable-based configuration)
-- **Variables**: `DOCKERHUB_REPO`, `DOCKERHUB_IMG`, `RELEASE_VERSION`, `HUGGINGFACE_ACCESS_TOKEN`
+- **Variables**: `DOCKERHUB_REPO`, `DOCKERHUB_IMG`, `RELEASE_VERSION`
 - **Platform**: `linux/amd64` (GPU-optimized)
 
 ## Release & Versioning Strategy
@@ -277,7 +261,6 @@ src/
 def get_engine_args():
     args = DEFAULT_ARGS
     args.update(os.environ)  # Environment override
-    args.update(get_local_args())  # Baked model override
     return match_vllm_args(args)  # Validate against vLLM
 ```
 

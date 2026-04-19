@@ -9,7 +9,7 @@ try:
     from vllm.entrypoints.openai.engine.protocol import ErrorResponse, ErrorInfo, RequestResponseMetadata
     from vllm import SamplingParams
 except ImportError:
-    logging.warning("Error importing vllm, skipping related imports. This is ONLY expected when baking model into docker image from a machine without GPUs")
+    logging.warning("Error importing vLLM, skipping related imports. This is expected in lightweight build environments without GPU-ready vLLM installed yet.")
     pass
 
 logging.basicConfig(level=logging.INFO)

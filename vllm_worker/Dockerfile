@@ -16,17 +16,11 @@ COPY builder/requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --upgrade -r /requirements.txt
 
-# Setup for Option 2: Building the Image with the Model included
-ARG MODEL_NAME=""
-ARG TOKENIZER_NAME=""
-ARG BASE_PATH="/runpod-volume"
-ARG QUANTIZATION=""
-ARG MODEL_REVISION=""
-ARG TOKENIZER_REVISION=""
 ARG VLLM_NIGHTLY="false"
 ARG MAX_MODEL_LEN=""
 ARG ENFORCE_EAGER=""
 
+<<<<<<< Updated upstream
 ENV MODEL_NAME=$MODEL_NAME \
     MODEL_REVISION=$MODEL_REVISION \
     TOKENIZER_NAME=$TOKENIZER_NAME \
@@ -38,12 +32,16 @@ ENV MODEL_NAME=$MODEL_NAME \
     HF_DATASETS_CACHE="${BASE_PATH}/huggingface-cache/datasets" \
     HUGGINGFACE_HUB_CACHE="${BASE_PATH}/huggingface-cache/hub" \
     HF_HOME="${BASE_PATH}/huggingface-cache/hub" \
+=======
+ENV HF_HUB_OFFLINE=0 \
+    TRANSFORMERS_OFFLINE=0 \
+>>>>>>> Stashed changes
     HF_HUB_ENABLE_HF_TRANSFER=0 \
-    # Suppress Ray metrics agent warnings (not needed in containerized environments)
+    HF_HOME=/runpod-volume/huggingface-cache \
+    HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub \
+    HF_DATASETS_CACHE=/runpod-volume/huggingface-cache/datasets \
     RAY_METRICS_EXPORT_ENABLED=0 \
     RAY_DISABLE_USAGE_STATS=1 \
-    # Prevent rayon thread pool panic in containers where ulimit -u < nproc
-    # (tokenizers uses Rust's rayon which tries to spawn threads = CPU cores)
     TOKENIZERS_PARALLELISM=false \
     RAYON_NUM_THREADS=4
 
@@ -56,13 +54,6 @@ RUN if [ "${VLLM_NIGHTLY}" = "true" ]; then \
 fi
 
 COPY src /src
-RUN --mount=type=secret,id=HF_TOKEN,required=false \
-    if [ -f /run/secrets/HF_TOKEN ]; then \
-    export HF_TOKEN=$(cat /run/secrets/HF_TOKEN); \
-    fi && \
-    if [ -n "$MODEL_NAME" ]; then \
-    python3 /src/download_model.py; \
-    fi
 
 # Start the handler
 CMD ["python3", "/src/handler.py"]

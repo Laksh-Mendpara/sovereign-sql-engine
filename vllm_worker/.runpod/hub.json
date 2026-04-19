@@ -187,7 +187,7 @@
           "name": "Max Model Length",
           "type": "number",
           "description": "Model context length.",
-          "default": null,
+          "default": 4096,
           "advanced": true
         }
       },
@@ -286,7 +286,7 @@
           "name": "Max Num Batched Tokens",
           "type": "number",
           "description": "Maximum number of batched tokens per iteration.",
-          "default": null,
+          "default": 4096,
           "advanced": true
         }
       },
@@ -342,6 +342,10 @@
             {
               "label": "GPTQ",
               "value": "gptq"
+            },
+            {
+              "label": "GPTQ Marlin",
+              "value": "gptq_marlin"
             }
           ],
           "advanced": true
@@ -621,7 +625,17 @@
           "name": "Enforce Eager",
           "type": "boolean",
           "description": "Always use eager-mode PyTorch. If False (0), will use eager mode and CUDA graph in hybrid for maximal performance and flexibility",
-          "default": false,
+          "default": true,
+          "advanced": true
+        }
+      },
+      {
+        "key": "HF_HUB_OFFLINE",
+        "input": {
+          "name": "HF Hub Offline",
+          "type": "boolean",
+          "description": "Keep Hugging Face Hub offline and rely on the RunPod cached snapshot when available.",
+          "default": true,
           "advanced": true
         }
       },
