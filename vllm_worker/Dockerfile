@@ -1,7 +1,8 @@
 FROM nvidia/cuda:12.9.1-base-ubuntu22.04 
 
 RUN apt-get update -y \
-    && apt-get install -y python3-pip
+    && apt-get install -y python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN ldconfig /usr/local/cuda-12.9/compat/
 
@@ -20,7 +21,6 @@ ARG VLLM_NIGHTLY="false"
 ARG MAX_MODEL_LEN=""
 ARG ENFORCE_EAGER=""
 
-<<<<<<< Updated upstream
 ENV MODEL_NAME=$MODEL_NAME \
     MODEL_REVISION=$MODEL_REVISION \
     TOKENIZER_NAME=$TOKENIZER_NAME \
@@ -29,13 +29,8 @@ ENV MODEL_NAME=$MODEL_NAME \
     QUANTIZATION=$QUANTIZATION \
     MAX_MODEL_LEN=$MAX_MODEL_LEN \
     ENFORCE_EAGER=$ENFORCE_EAGER \
-    HF_DATASETS_CACHE="${BASE_PATH}/huggingface-cache/datasets" \
-    HUGGINGFACE_HUB_CACHE="${BASE_PATH}/huggingface-cache/hub" \
-    HF_HOME="${BASE_PATH}/huggingface-cache/hub" \
-=======
-ENV HF_HUB_OFFLINE=0 \
+    HF_HUB_OFFLINE=0 \
     TRANSFORMERS_OFFLINE=0 \
->>>>>>> Stashed changes
     HF_HUB_ENABLE_HF_TRANSFER=0 \
     HF_HOME=/runpod-volume/huggingface-cache \
     HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub \

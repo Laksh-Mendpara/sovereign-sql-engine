@@ -157,6 +157,21 @@ The way this works is that the first request will have a batch size of `DEFAULT_
 | `DISABLE_LOGGING_REQUEST`   | False   | `bool`  | Disable logging requests.                                                                                                                              |
 | `MAX_LOG_LEN`               | None    | `int`   | Max number of prompt characters or prompt ID numbers being printed in log.                                                                             |
 
+## LMCache / Upstash Settings
+
+LMCache can be enabled for KV cache reuse across requests. When the worker sees `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, it derives the Redis TLS URI that LMCache expects and enables experimental LMCache mode automatically.
+
+| Variable                     | Default | Type  | Description |
+| --------------------------- | ------- | ----- | ----------- |
+| `ENABLE_LMCACHE`            | False   | `bool` | Turns on worker-side LMCache wiring. |
+| `LMCACHE_USE_EXPERIMENTAL`  | True    | `bool` | Enables LMCache v1 behavior. |
+| `LMCACHE_CONFIG_FILE`       | None    | `str`  | Optional LMCache YAML file path. If set, it takes priority over env vars. |
+| `LMCACHE_REMOTE_URL`        | None    | `str`  | Redis TLS URI used by LMCache. Normally derived automatically from Upstash env vars. |
+| `LMCACHE_REMOTE_SERDE`      | `naive` | `str`  | Serialization mode for remote KV cache. |
+| `LMCACHE_CHUNK_SIZE`        | `256`   | `int`  | KV chunk size in tokens. |
+| `UPSTASH_REDIS_REST_URL`    | None    | `str`  | Upstash REST endpoint URL used to derive the Redis TLS endpoint. |
+| `UPSTASH_REDIS_REST_TOKEN`  | None    | `str`  | Upstash auth token used to derive the Redis TLS password. |
+
 ## UPPERCASED env vars: Pass any engine arg
 
 Any vLLM `AsyncEngineArgs` field can be set via an environment variable using the **UPPERCASED** field name (the same names vLLM uses). The worker auto-discovers all fields from env — no prefix.

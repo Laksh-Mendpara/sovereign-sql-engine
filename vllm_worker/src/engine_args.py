@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from urllib.parse import urlparse
 from typing import get_origin, get_args
 from torch.cuda import device_count
 from vllm import AsyncEngineArgs
@@ -58,6 +59,89 @@ DEFAULT_ARGS = {
     "spec_decoding_acceptance_method": "rejection_sampler",
     "stream_interval": 1,
 }
+
+LMCACHE_CONNECTOR_NAME = "LMCacheConnectorV1"
+
+
+def _lmcache_requested() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "ENABLE_LMCACHE",
+            "LMCACHE_CONFIG_FILE",
+            "LMCACHE_REMOTE_URL",
+            "LMCACHE_USE_EXPERIMENTAL",
+        )
+    )
+
+
+def _build_lmcache_transfer_config() -> dict | None:
+    """Build vLLM KV transfer config for LMCache when requested.
+
+    LMCache uses the same vLLM kv_transfer_config hook for both local and
+    remote cache tiers. We only inject the connector when the operator has
+    explicitly opted into LMCache via env vars.
+    """
+    if not _lmcache_requested():
+        return None
+
+    try:
+        from vllm.config import KVTransferConfig
+    except Exception as exc:
+        logging.warning("LMCache requested but KVTransferConfig is unavailable: %s", exc)
+        return None
+
+    try:
+        config = KVTransferConfig(kv_connector=LMCACHE_CONNECTOR_NAME, kv_role="kv_both")
+        logging.info(
+            "Enabled LMCache integration with connector=%s, remote_url=%s",
+            LMCACHE_CONNECTOR_NAME,
+            os.getenv("LMCACHE_REMOTE_URL"),
+        )
+        return config
+    except Exception as exc:
+        logging.warning("Failed to build LMCache transfer config: %s", exc)
+        return None
+
+
+def _upstash_rest_to_redis_url() -> str | None:
+    """Convert Upstash REST credentials into the Redis TLS URI LMCache expects.
+
+    Upstash exposes a REST endpoint and token, but LMCache's Redis connector
+    speaks the Redis protocol. Upstash Redis also supports the Redis protocol
+    over TLS, so we derive the `rediss://` URI from the REST host.
+    """
+    rest_url = os.getenv("UPSTASH_REDIS_REST_URL")
+    token = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_REST_TOKEN")
+    if not rest_url or not token:
+        return None
+
+    parsed = urlparse(rest_url)
+    if parsed.scheme in {"rediss", "redis"}:
+        return rest_url
+
+    host = parsed.netloc or parsed.path
+    if not host:
+        return None
+    host = host.rstrip("/")
+    if ":" not in host:
+        host = f"{host}:6379"
+    return f"rediss://default:{token}@{host}"
+
+
+def _ensure_upstash_lmcache_env() -> None:
+    """Populate LMCache env vars from Upstash REST settings when present."""
+    if os.getenv("LMCACHE_REMOTE_URL"):
+        return
+
+    redis_url = _upstash_rest_to_redis_url()
+    if not redis_url:
+        return
+
+    os.environ["LMCACHE_REMOTE_URL"] = redis_url
+    os.environ.setdefault("LMCACHE_REMOTE_SERDE", "naive")
+    os.environ.setdefault("LMCACHE_USE_EXPERIMENTAL", "True")
+    logging.info("Configured LMCache remote storage from Upstash Redis REST env vars")
 
 
 def _resolve_field_type(field_type: type) -> type:
@@ -409,7 +493,22 @@ def get_engine_args():
 
     if args.get("load_format") == "bitsandbytes":
         args["quantization"] = args["load_format"]
-    
+
+    # LMCache integration (remote KV cache via Redis / Upstash)
+    _ensure_upstash_lmcache_env()
+    lmcache_transfer_config = _build_lmcache_transfer_config()
+    if lmcache_transfer_config is not None and "kv_transfer_config" not in args:
+        args["kv_transfer_config"] = lmcache_transfer_config
+
+    if _lmcache_requested() and not args.get("quantization"):
+        args["quantization"] = "bitsandbytes"
+        logging.info("LMCache requested without quantization; defaulting to bitsandbytes 4-bit quantization")
+
+    if _lmcache_requested():
+        os.environ.setdefault("LMCACHE_USE_EXPERIMENTAL", "True")
+        if os.getenv("LMCACHE_REMOTE_URL"):
+            logging.info("LMCache remote cache URL configured: %s", os.getenv("LMCACHE_REMOTE_URL"))
+
     # Set tensor parallel size and max parallel loading workers if more than 1 GPU is available
     num_gpus = device_count()
     if num_gpus > 1:

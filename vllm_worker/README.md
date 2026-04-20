@@ -69,6 +69,122 @@ This image is tuned for RunPod model caching. The worker looks for cached Huggin
 
 For the complete list of all available environment variables, examples, and detailed descriptions: **[Configuration](docs/configuration.md)**
 
+### Run a Hugging Face model offline
+
+If you want the worker to run without fetching from Hugging Face on startup, mount or reuse a cache directory and force offline mode.
+
+Recommended environment variables:
+
+```bash
+MODEL_NAME=meta-llama/Meta-Llama-3.1-8B-Instruct
+MODEL_REVISION=main
+HF_HOME=/runpod-volume/huggingface-cache
+HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+HF_HUB_ENABLE_HF_TRANSFER=0
+```
+
+What these do:
+
+- `MODEL_NAME` points vLLM at the Hugging Face repo or a local snapshot path.
+- `HF_HOME` and `HUGGINGFACE_HUB_CACHE` tell Hugging Face where to keep the local cache.
+- `HF_HUB_OFFLINE=1` prevents network access for model loading.
+- `TRANSFORMERS_OFFLINE=1` keeps tokenizer/config loading offline too.
+
+If the model is already cached under `/runpod-volume/huggingface-cache/hub`, the worker will use the local snapshot and skip download.
+
+### Set model length, eager mode, and batching
+
+These are the most common knobs for a stable serverless deployment:
+
+```bash
+MAX_MODEL_LEN=8192
+ENFORCE_EAGER=true
+GPU_MEMORY_UTILIZATION=0.90
+MAX_NUM_SEQS=256
+MAX_CONCURRENCY=30
+```
+
+- `MAX_MODEL_LEN` controls the context window the worker will expose.
+- `ENFORCE_EAGER=true` disables CUDA graph capture and is safer for many serverless setups.
+- `GPU_MEMORY_UTILIZATION` keeps vLLM from over-allocating VRAM.
+- `MAX_NUM_SEQS` caps internal concurrency inside the engine.
+- `MAX_CONCURRENCY` caps the RunPod worker request concurrency.
+
+### Enable LMCache with Upstash Redis
+
+LMCache lets vLLM reuse KV cache across requests. For remote cache storage, point LMCache at an Upstash Redis endpoint.
+
+Recommended environment variables:
+
+```bash
+ENABLE_LMCACHE=true
+LMCACHE_USE_EXPERIMENTAL=True
+UPSTASH_REDIS_REST_URL=https://<YOUR-DATABASE>.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<YOUR_UPSTASH_TOKEN>
+LMCACHE_REMOTE_SERDE=naive
+LMCACHE_CHUNK_SIZE=256
+```
+
+What these do:
+
+- `ENABLE_LMCACHE=true` turns on the worker-side LMCache integration.
+- `LMCACHE_USE_EXPERIMENTAL=True` enables LMCache v1 behavior.
+- `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are enough for the worker to derive the Redis TLS connection LMCache expects.
+- `LMCACHE_REMOTE_SERDE=naive` keeps serialization simple and compatible.
+- `LMCACHE_CHUNK_SIZE=256` is a good starting point for KV chunking.
+
+If you want to configure LMCache through a file instead of env vars, set `LMCACHE_CONFIG_FILE=/path/to/lmcache.yaml`. The worker also defaults to `bitsandbytes` 4-bit quantization when LMCache is enabled and you have not set `QUANTIZATION` explicitly.
+
+### Build or run with Upstash credentials
+
+For local Docker runs, pass the Upstash values as environment variables:
+
+```bash
+docker run --gpus all --rm -p 8000:8000 \
+  -e MODEL_NAME=meta-llama/Meta-Llama-3.1-8B-Instruct \
+  -e HF_HOME=/runpod-volume/huggingface-cache \
+  -e HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub \
+  -e HF_HUB_OFFLINE=1 \
+  -e TRANSFORMERS_OFFLINE=1 \
+  -e MAX_MODEL_LEN=8192 \
+  -e ENFORCE_EAGER=true \
+  -e QUANTIZATION=bitsandbytes \
+  -e UPSTASH_REDIS_REST_URL=https://<YOUR-DATABASE>.upstash.io \
+  -e UPSTASH_REDIS_REST_TOKEN=<YOUR_UPSTASH_TOKEN> \
+  worker-vllm
+```
+
+If you prefer a single command for RunPod or your own shell, use the same variables in the worker environment. The worker will derive the LMCache Redis URL automatically.
+
+### Suggested offline + LMCache setup
+
+This is a good starting point when you want offline model loading, 4-bit quantization, and remote KV cache:
+
+```bash
+MODEL_NAME=meta-llama/Meta-Llama-3.1-8B-Instruct
+HF_HOME=/runpod-volume/huggingface-cache
+HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+MAX_MODEL_LEN=8192
+ENFORCE_EAGER=true
+QUANTIZATION=bitsandbytes
+ENABLE_LMCACHE=true
+UPSTASH_REDIS_REST_URL=https://<YOUR-DATABASE>.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<YOUR_UPSTASH_TOKEN>
+LMCACHE_REMOTE_SERDE=naive
+LMCACHE_CHUNK_SIZE=256
+```
+
+With this setup:
+
+- the model loads from local cache only,
+- the model runs in 4-bit mode,
+- eager execution avoids graph-capture surprises,
+- LMCache stores KV cache in Upstash Redis for reuse.
+
 # Compatible Model Architectures
 
 You can deploy **any model on Hugging Face** that is supported by vLLM. For the complete and up-to-date list of supported model architectures, see the [vLLM Supported Models documentation](https://docs.vllm.ai/en/latest/models/supported_models.html#list-of-text-only-language-models).
