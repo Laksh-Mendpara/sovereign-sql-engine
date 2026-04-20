@@ -192,6 +192,14 @@ pre {
   justify-content: flex-end;
 }
 
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .primary-button,
 .secondary-button,
 .theme-switch,
@@ -230,6 +238,12 @@ pre {
   border: 1px solid var(--border);
 }
 
+.ghost-button {
+  color: var(--text);
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.16);
+}
+
 html[data-theme='dark'] .secondary-button,
 html[data-theme='dark'] .theme-switch,
 html[data-theme='dark'] .follow-button {
@@ -237,7 +251,8 @@ html[data-theme='dark'] .follow-button {
 }
 
 .primary-button:disabled,
-.secondary-button:disabled {
+.secondary-button:disabled,
+.ghost-button:disabled {
   opacity: 0.45;
   transform: none;
   cursor: not-allowed;
@@ -602,6 +617,24 @@ html[data-theme='dark'] .detail-block {
 
 .sql-block {
   min-height: 128px;
+}
+
+.feedback-status {
+  margin: 14px 0 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.feedback-status.sending {
+  color: var(--muted);
+}
+
+.feedback-status.ok {
+  color: var(--success);
+}
+
+.feedback-status.error {
+  color: var(--danger);
 }
 
 .bottom-grid {

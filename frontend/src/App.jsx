@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { streamPipeline } from './lib/pipeline'
+import { streamPipeline, submitFeedback } from './lib/pipeline'
 
 const initialPipelineState = {
   query: '',
@@ -286,6 +286,7 @@ export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('frontend-theme') || 'light')
   const [selectedEventIndex, setSelectedEventIndex] = useState(null)
   const [followLatest, setFollowLatest] = useState(true)
+  const [feedbackStatus, setFeedbackStatus] = useState(null)
   const abortRef = useRef(null)
   const eventsEndRef = useRef(null)
 
@@ -332,6 +333,7 @@ export default function App() {
     const cleaned = normalizeQuery(query)
     if (!cleaned || state.running) return
 
+    setFeedbackStatus(null)
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -366,6 +368,32 @@ export default function App() {
   function selectEvent(index) {
     setSelectedEventIndex(index)
     setFollowLatest(false)
+  }
+
+  async function sendThumbsDown() {
+    if (!state.requestId || state.running) return
+
+    const responseText =
+      executionSql ||
+      generatedSql ||
+      state.executionRemark?.execution_sql ||
+      state.runpod?.generated_sql ||
+      ''
+
+    setFeedbackStatus('sending')
+    try {
+      await submitFeedback({
+        request_id: state.requestId,
+        trace_id: state.traceId || undefined,
+        query: state.query || query,
+        response: responseText,
+        feedback_type: 'thumbs_down',
+        comment: 'wrong output'
+      })
+      setFeedbackStatus('recorded')
+    } catch (error) {
+      setFeedbackStatus(error instanceof Error ? error.message : 'Failed to send feedback')
+    }
   }
 
   return (
@@ -517,7 +545,17 @@ export default function App() {
                 <p className="section-label">Generated SQL</p>
                 <h3>Model output</h3>
               </div>
-              <Badge tone={generatedSql ? 'success' : 'muted'}>{generatedSql ? 'Ready' : 'Pending'}</Badge>
+              <div className="card-actions">
+                <Badge tone={generatedSql ? 'success' : 'muted'}>{generatedSql ? 'Ready' : 'Pending'}</Badge>
+                <button
+                  className="ghost-button feedback-button"
+                  onClick={sendThumbsDown}
+                  disabled={!state.requestId || state.running}
+                  type="button"
+                >
+                  Thumbs down
+                </button>
+              </div>
             </div>
             {generatedSql ? (
               <pre className="sql-block">{generatedSql}</pre>
@@ -533,6 +571,15 @@ export default function App() {
                 }
               />
             )}
+            {feedbackStatus ? (
+              <p className={`feedback-status ${feedbackStatus === 'recorded' ? 'ok' : feedbackStatus === 'sending' ? 'sending' : 'error'}`}>
+                {feedbackStatus === 'sending'
+                  ? 'Sending feedback...'
+                  : feedbackStatus === 'recorded'
+                    ? 'Feedback recorded.'
+                    : feedbackStatus}
+              </p>
+            ) : null}
           </article>
 
           <article className="card">
