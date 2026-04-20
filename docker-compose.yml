@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    depends_on:
+      - backend
+    env_file:
+      - infra/monitoring/grafana-cloud.env
+    volumes:
+      - prometheus_data:/prometheus
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus-entrypoint.sh:/etc/prometheus/prometheus-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/etc/prometheus/prometheus-entrypoint.sh"]
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    depends_on:
+      - backend
+    env_file:
+      - infra/monitoring/grafana-cloud.env
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail_positions:/var/lib/promtail
+      - ./infra/monitoring/promtail.yml:/etc/promtail/promtail.yml:ro
+      - ./infra/monitoring/promtail-entrypoint.sh:/etc/promtail/promtail-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/etc/promtail/promtail-entrypoint.sh"]
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  promtail_positions:
