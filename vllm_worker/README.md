@@ -80,8 +80,6 @@ MODEL_NAME=meta-llama/Meta-Llama-3.1-8B-Instruct
 MODEL_REVISION=main
 HF_HOME=/runpod-volume/huggingface-cache
 HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub
-HF_HUB_OFFLINE=1
-TRANSFORMERS_OFFLINE=1
 HF_HUB_ENABLE_HF_TRANSFER=0
 ```
 
@@ -89,8 +87,8 @@ What these do:
 
 - `MODEL_NAME` points vLLM at the Hugging Face repo or a local snapshot path.
 - `HF_HOME` and `HUGGINGFACE_HUB_CACHE` tell Hugging Face where to keep the local cache.
-- `HF_HUB_OFFLINE=1` prevents network access for model loading.
-- `TRANSFORMERS_OFFLINE=1` keeps tokenizer/config loading offline too.
+- Leave `HF_HUB_OFFLINE` and `TRANSFORMERS_OFFLINE` unset for the first run if the model is not cached yet.
+- Once the snapshot exists in the mounted cache, the worker switches to offline mode automatically on the next start.
 
 If the model is already cached under `/runpod-volume/huggingface-cache/hub`, the worker will use the local snapshot and skip download.
 
@@ -146,8 +144,6 @@ docker run --gpus all --rm -p 8000:8000 \
   -e MODEL_NAME=meta-llama/Meta-Llama-3.1-8B-Instruct \
   -e HF_HOME=/runpod-volume/huggingface-cache \
   -e HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub \
-  -e HF_HUB_OFFLINE=1 \
-  -e TRANSFORMERS_OFFLINE=1 \
   -e MAX_MODEL_LEN=8192 \
   -e ENFORCE_EAGER=true \
   -e QUANTIZATION=bitsandbytes \
@@ -166,8 +162,6 @@ This is a good starting point when you want offline model loading, 4-bit quantiz
 MODEL_NAME=meta-llama/Meta-Llama-3.1-8B-Instruct
 HF_HOME=/runpod-volume/huggingface-cache
 HUGGINGFACE_HUB_CACHE=/runpod-volume/huggingface-cache/hub
-HF_HUB_OFFLINE=1
-TRANSFORMERS_OFFLINE=1
 MAX_MODEL_LEN=8192
 ENFORCE_EAGER=true
 QUANTIZATION=bitsandbytes
@@ -184,6 +178,8 @@ With this setup:
 - the model runs in 4-bit mode,
 - eager execution avoids graph-capture surprises,
 - LMCache stores KV cache in Upstash Redis for reuse.
+
+If this is the first time you are running the model and the cache is empty, keep `HF_HUB_OFFLINE` unset so the worker can download the snapshot into the mounted cache in the same run. After that, the mounted cache will satisfy future runs without re-downloading.
 
 # Compatible Model Architectures
 

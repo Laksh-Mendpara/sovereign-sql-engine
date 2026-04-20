@@ -455,17 +455,24 @@ def get_engine_args():
         args["model"] = cached_model
         if original_model_name:
             args["served_model_name"] = original_model_name
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        logging.info("Using cached Hugging Face snapshot for model %s", original_model_name or cached_model)
+    else:
+        # If the model is not already cached, allow the first run to download it
+        # into the mounted HF cache so future runs can stay offline.
+        os.environ["HF_HUB_OFFLINE"] = "0"
+        os.environ["TRANSFORMERS_OFFLINE"] = "0"
+        logging.info("No cached model snapshot found; allowing online download to populate the mounted cache")
 
     if args.get("tokenizer"):
         cached_tokenizer = _resolve_cached_snapshot_path(args.get("tokenizer"))
         if cached_tokenizer:
             args["tokenizer"] = cached_tokenizer
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
     elif cached_model:
         args["tokenizer"] = cached_model
-
-    if cached_model:
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     # Filter to valid engine args and drop sentinel empty values
     valid_fields = AsyncEngineArgs.__dataclass_fields__
