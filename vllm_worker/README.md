@@ -127,7 +127,7 @@ LMCACHE_CHUNK_SIZE=256
 
 What these do:
 
-- `ENABLE_LMCACHE=true` turns on the worker-side LMCache integration.
+- `ENABLE_LMCACHE=true` turns on the worker-side LMCache integration. Without this flag, the worker boots normally and ignores the Upstash cache settings.
 - `LMCACHE_USE_EXPERIMENTAL=True` enables LMCache v1 behavior.
 - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are enough for the worker to derive the Redis TLS connection LMCache expects.
 - `LMCACHE_REMOTE_SERDE=naive` keeps serialization simple and compatible.
@@ -137,7 +137,13 @@ If you want to configure LMCache through a file instead of env vars, set `LMCACH
 
 ### Build or run with Upstash credentials
 
-For local Docker runs, pass the Upstash values as environment variables:
+Build the image with no model-specific build arguments:
+
+```bash
+docker build -t worker-vllm .
+```
+
+For local Docker runs, pass the runtime values as environment variables:
 
 ```bash
 docker run --gpus all --rm -p 8000:8000 \
@@ -153,6 +159,7 @@ docker run --gpus all --rm -p 8000:8000 \
 ```
 
 If you prefer a single command for RunPod or your own shell, use the same variables in the worker environment. The worker will derive the LMCache Redis URL automatically.
+If you want a guaranteed clean startup on the first try, leave `ENABLE_LMCACHE` unset until you have confirmed your LMCache wheel and PyTorch/CUDA stack are compatible.
 
 ### Suggested offline + LMCache setup
 

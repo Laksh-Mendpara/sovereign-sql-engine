@@ -63,16 +63,21 @@ DEFAULT_ARGS = {
 LMCACHE_CONNECTOR_NAME = "LMCacheConnectorV1"
 
 
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _lmcache_requested() -> bool:
-    return any(
-        os.getenv(name)
-        for name in (
-            "ENABLE_LMCACHE",
-            "LMCACHE_CONFIG_FILE",
-            "LMCACHE_REMOTE_URL",
-            "LMCACHE_USE_EXPERIMENTAL",
-        )
-    )
+    return _env_truthy("ENABLE_LMCACHE") or bool(os.getenv("LMCACHE_CONFIG_FILE"))
+
+
+def _lmcache_is_usable() -> bool:
+    try:
+        import lmcache.c_ops  # noqa: F401
+        return True
+    except Exception as exc:
+        logging.warning("LMCache native extension is unavailable; disabling LMCache. error=%s", exc)
+        return False
 
 
 def _build_lmcache_transfer_config() -> dict | None:
@@ -502,19 +507,24 @@ def get_engine_args():
         args["quantization"] = args["load_format"]
 
     # LMCache integration (remote KV cache via Redis / Upstash)
-    _ensure_upstash_lmcache_env()
-    lmcache_transfer_config = _build_lmcache_transfer_config()
-    if lmcache_transfer_config is not None and "kv_transfer_config" not in args:
-        args["kv_transfer_config"] = lmcache_transfer_config
-
-    if _lmcache_requested() and not args.get("quantization"):
-        args["quantization"] = "bitsandbytes"
-        logging.info("LMCache requested without quantization; defaulting to bitsandbytes 4-bit quantization")
-
-    if _lmcache_requested():
-        os.environ.setdefault("LMCACHE_USE_EXPERIMENTAL", "True")
+    lmcache_requested = _lmcache_requested()
+    lmcache_usable = False
+    if lmcache_requested:
+        _ensure_upstash_lmcache_env()
+        lmcache_usable = _lmcache_is_usable()
+        if lmcache_usable and not args.get("quantization"):
+            args["quantization"] = "bitsandbytes"
+            logging.info("LMCache requested without quantization; defaulting to bitsandbytes 4-bit quantization")
         if os.getenv("LMCACHE_REMOTE_URL"):
             logging.info("LMCache remote cache URL configured: %s", os.getenv("LMCACHE_REMOTE_URL"))
+        if not lmcache_usable:
+            os.environ.pop("LMCACHE_REMOTE_URL", None)
+            os.environ.pop("LMCACHE_USE_EXPERIMENTAL", None)
+            logging.warning("Skipping LMCache kv_transfer_config because the native extension is incompatible with this image")
+    if lmcache_usable:
+        lmcache_transfer_config = _build_lmcache_transfer_config()
+        if lmcache_transfer_config is not None and "kv_transfer_config" not in args:
+            args["kv_transfer_config"] = lmcache_transfer_config
 
     # Set tensor parallel size and max parallel loading workers if more than 1 GPU is available
     num_gpus = device_count()

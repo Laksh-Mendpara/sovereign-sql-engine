@@ -159,7 +159,7 @@ The way this works is that the first request will have a batch size of `DEFAULT_
 
 ## LMCache / Upstash Settings
 
-LMCache can be enabled for KV cache reuse across requests. When the worker sees `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`, it derives the Redis TLS URI that LMCache expects and enables experimental LMCache mode automatically.
+LMCache can be enabled for KV cache reuse across requests. Upstash credentials are only consumed when `ENABLE_LMCACHE=true` (or when a custom LMCache config file is provided). The worker derives the Redis TLS URI that LMCache expects and enables experimental LMCache mode when LMCache is actually turned on.
 
 | Variable                     | Default | Type  | Description |
 | --------------------------- | ------- | ----- | ----------- |
