@@ -1,0 +1,17 @@
+.git
+.DS_Store
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/node_modules
+**/dist
+backend/.env
+pipeline_test/.env
+model_quantization/.env
+metadata_creation/.env
+infra/monitoring/grafana-cloud.env

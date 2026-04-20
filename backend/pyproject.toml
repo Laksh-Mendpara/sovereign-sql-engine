@@ -1,0 +1,40 @@
+[project]
+name = "sovereign-sql-backend"
+version = "0.1.0"
+description = "Production-grade FastAPI backend for Text2SQL pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.8.0",
+    "python-ulid>=3.0.0",
+    "python-dotenv>=1.2.2",
+    "sse-starlette>=2.2.1",
+    # These are needed for the services
+    "neo4j>=5.28.1",
+    "pinecone>=8.1.1",
+    "sqlitecloud>=0.0.84",
+]
+
+[project.scripts]
+start = "backend.app:run_server"
+
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["backend"]
+package-dir = { backend = "." }
+
+
+[tool.setuptools.package-data]
+"*" = ["*.py"]
+
+

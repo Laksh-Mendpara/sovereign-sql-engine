@@ -1,0 +1,45 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: ${GRAFANA_CLOUD_LOKI_URL}
+    basic_auth:
+      username: ${GRAFANA_CLOUD_LOKI_USERNAME}
+      password: ${GRAFANA_CLOUD_LOKI_API_KEY}
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            message: message
+            service_name: service_name
+            environment: environment
+            request_id: request_id
+            trace_id: trace_id
+            span_id: span_id
+            span_name: span_name
+      - labels:
+          level:
+          logger:
+          service_name:
+          span_name:
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+      - source_labels: ["__meta_docker_container_log_path"]
+        target_label: __path__

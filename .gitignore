@@ -207,3 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 models/
+
+node_modules
+infra/monitoring/grafana-cloud.env
