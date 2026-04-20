@@ -40,13 +40,24 @@ class GuardService:
 
     def check(self, query: str) -> GuardResult:
         self.logger.info("Running guardrail check")
-        raw = self.client.chat(build_guard_messages(query), max_tokens=8, temperature=0.0)
-        self.logger.debug("Guard response: %s", raw)
-        allowed, reason = parse_guard_response(raw)
-        if not allowed and not self._looks_obviously_unsafe(query):
+        try:
+            raw = self.client.chat(build_guard_messages(query), max_tokens=8, temperature=0.0)
+            self.logger.debug("Guard response: %s", raw)
+            allowed, reason = parse_guard_response(raw)
+            if not allowed and not self._looks_obviously_unsafe(query):
+                self.logger.warning(
+                    "Guard model returned an unsafe-style response for a benign-looking query; allowing it. raw=%s",
+                    raw,
+                )
+                return GuardResult(allowed=True, reason="", raw_response=raw)
+            return GuardResult(allowed=allowed, reason=reason, raw_response=raw)
+        except Exception as exc:
             self.logger.warning(
-                "Guard model returned an unsafe-style response for a benign-looking query; allowing it. raw=%s",
-                raw,
+                "Guard service unavailable; failing closed. error=%s",
+                exc,
             )
-            return GuardResult(allowed=True, reason="", raw_response=raw)
-        return GuardResult(allowed=allowed, reason=reason, raw_response=raw)
+            return GuardResult(
+                allowed=False,
+                reason="Guard service unavailable; request blocked as fail-safe",
+                raw_response=f"error: {exc}",
+            )

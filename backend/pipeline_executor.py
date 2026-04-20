@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from .services.classifier_service import ClassifierService
     from .services.guard_service import GuardService
     from .services.metadata_service import MetadataService
+    from .services.observability_service import ObservabilityService
     from .services.neo4j_service import Neo4jService
     from .services.pinecone_service import PineconeService
     from .services.sql_execution_service import SqlExecutionService
@@ -82,6 +83,7 @@ class AsyncPipelineExecutor:
         metadata_service: MetadataService,
         sql_execution_service: SqlExecutionService,
         runpod_service: RunpodService,
+        observability_service: ObservabilityService,
     ) -> None:
         self.cfg = settings
         self.guard = guard_service
@@ -91,6 +93,7 @@ class AsyncPipelineExecutor:
         self.metadata = metadata_service
         self.sql_executor = sql_execution_service
         self.runpod = runpod_service
+        self.observability = observability_service
         self.metrics: MetricsCollector = get_metrics()
 
     # ── Public entry point ─────────────────────────────────────────────────────
@@ -130,6 +133,10 @@ class AsyncPipelineExecutor:
                 "skipped": response.skipped,
                 "classification": response.classification.label,
             },
+        )
+        await asyncio.to_thread(
+            self.observability.upsert_request_record,
+            self._build_audit_record(response, query, request_id, trace_id),
         )
         return response
 
@@ -461,3 +468,55 @@ class AsyncPipelineExecutor:
             skipped=skipped,
             skip_reason=skip_reason,
         )
+
+    @staticmethod
+    def _build_audit_record(
+        response: PipelineResponse,
+        query: str,
+        request_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        if response.guard.allowed is False:
+            execution_status = "blocked_guardrail"
+            terminal_state = "guardrail_blocked"
+        elif response.classification.label == "out_of_topic":
+            execution_status = "blocked_out_of_topic"
+            terminal_state = "out_of_topic"
+        elif response.execution_sql is None and response.generated_sql:
+            execution_status = "blocked_firewall"
+            terminal_state = "firewall_blocked"
+        elif response.skipped:
+            execution_status = "skipped"
+            terminal_state = "skipped"
+        else:
+            execution_status = "success"
+            terminal_state = "complete"
+
+        return {
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "query": query,
+            "prompt_json": {
+                "question": query,
+                "schema_sql": response.schema_sql,
+            },
+            "guard_allowed": response.guard.allowed,
+            "guard_reason": response.guard.reason,
+            "classification_label": response.classification.label,
+            "classification_reason": response.classification.reason,
+            "generated_sql": response.generated_sql,
+            "execution_sql": response.execution_sql,
+            "execution_result_json": response.execution_data,
+            "execution_row_count": len(response.execution_data or []),
+            "execution_status": execution_status,
+            "terminal_state": terminal_state,
+            "error_type": None,
+            "error_message": None,
+            "raw_runpod_response_json": response.runpod_response,
+            "metadata_json": {
+                "retrieved_columns": [c.model_dump() for c in response.retrieved_columns],
+                "retrieved_tables": [t.model_dump() for t in response.retrieved_tables],
+                "selected_tables": response.selected_tables,
+                "schema_tables": response.schema_tables,
+            },
+        }

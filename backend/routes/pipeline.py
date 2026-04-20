@@ -6,6 +6,7 @@ from sse_starlette.sse import EventSourceResponse
 from ..services.classifier_service import ClassifierService
 from ..services.guard_service import GuardService
 from ..services.metadata_service import MetadataService
+from ..services.observability_service import ObservabilityService
 from ..services.neo4j_service import Neo4jService
 from ..services.pinecone_service import PineconeService
 from ..services.sql_execution_service import SqlExecutionService
@@ -16,6 +17,7 @@ from ..dependencies import (
     get_classifier_service,
     get_guard_service,
     get_metadata_service,
+    get_observability_service,
     get_neo4j_service,
     get_pinecone_service,
     get_sql_execution_service,
@@ -23,7 +25,7 @@ from ..dependencies import (
     get_settings,
 )
 from ..logging_config import get_logger, get_request_id, get_trace_id
-from ..models import ErrorResponse, PipelineRequest, PipelineResponse
+from ..models import ErrorResponse, FeedbackRequest, FeedbackResponse, PipelineRequest, PipelineResponse
 from ..pipeline_executor import AsyncPipelineExecutor
 from ..sse_executor import SSEPipelineExecutor
 
@@ -63,6 +65,7 @@ async def run_pipeline(
     metadata_svc: MetadataService = Depends(get_metadata_service),
     sql_execution_svc: SqlExecutionService = Depends(get_sql_execution_service),
     runpod_svc: RunpodService = Depends(get_runpod_service),
+    observability_svc: ObservabilityService = Depends(get_observability_service),
 ) -> PipelineResponse:
     # Pull correlation IDs set by RequestContextMiddleware
     request_id: str = getattr(request.state, "request_id", None) or get_request_id()
@@ -89,6 +92,7 @@ async def run_pipeline(
         metadata_service=metadata_svc,
         sql_execution_service=sql_execution_svc,
         runpod_service=runpod_svc,
+        observability_service=observability_svc,
     )
 
     try:
@@ -100,6 +104,19 @@ async def run_pipeline(
 
     except asyncio.TimeoutError:
         logger.error("pipeline.request.timeout")
+        await asyncio.to_thread(
+            observability_svc.upsert_request_record,
+            {
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "query": body.query,
+                "execution_status": "timeout",
+                "terminal_state": "timeout",
+                "error_type": "timeout",
+                "error_message": f"Pipeline did not complete within {settings.total_pipeline_timeout}s",
+                "metadata_json": {"source": "pipeline.query"},
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail={
@@ -112,6 +129,19 @@ async def run_pipeline(
 
     except Exception as exc:
         logger.exception("pipeline.request.error", extra={"error": str(exc)})
+        await asyncio.to_thread(
+            observability_svc.upsert_request_record,
+            {
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "query": body.query,
+                "execution_status": "error",
+                "terminal_state": "error",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "metadata_json": {"source": "pipeline.query"},
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -168,6 +198,7 @@ async def stream_pipeline(
     metadata_svc: MetadataService = Depends(get_metadata_service),
     sql_execution_svc: SqlExecutionService = Depends(get_sql_execution_service),
     runpod_svc: RunpodService = Depends(get_runpod_service),
+    observability_svc: ObservabilityService = Depends(get_observability_service),
 ) -> EventSourceResponse:
     request_id: str = getattr(request.state, "request_id", None) or get_request_id()
     trace_id: str = getattr(request.state, "trace_id", None) or get_trace_id()
@@ -192,6 +223,7 @@ async def stream_pipeline(
         metadata_service=metadata_svc,
         sql_execution_service=sql_execution_svc,
         runpod_service=runpod_svc,
+        observability_service=observability_svc,
     )
 
     async def event_generator():
@@ -220,3 +252,40 @@ async def stream_pipeline(
             "X-Accel-Buffering": "no",   # Disable Nginx buffering for SSE
         },
     )
+
+
+@router.post(
+    "/feedback",
+    status_code=status.HTTP_200_OK,
+    summary="Store thumbs-down feedback for a pipeline response",
+)
+async def submit_feedback(
+    body: FeedbackRequest,
+    observability_svc: ObservabilityService = Depends(get_observability_service),
+) -> FeedbackResponse:
+    await asyncio.to_thread(
+        observability_svc.record_user_feedback,
+        request_id=body.request_id,
+        trace_id=body.trace_id,
+        query=body.query,
+        response=body.response,
+        feedback_type=body.feedback_type,
+        comment=body.comment,
+        rating=body.rating,
+        user_id=body.user_id,
+        session_id=body.session_id,
+    )
+    await asyncio.to_thread(
+        observability_svc.record_logical_failure,
+        request_id=body.request_id,
+        trace_id=body.trace_id,
+        query=body.query,
+        model_output=body.response,
+        expected_output=None,
+        is_correct=False,
+        failure_reason=body.comment or "thumbs_down",
+        review_status="new",
+        correction_json=None,
+        notes=body.comment,
+    )
+    return FeedbackResponse(status="ok", detail="feedback recorded")

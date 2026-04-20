@@ -61,13 +61,21 @@ class PineconeService:
             top_k,
             strict_filter,
         )
-        response = self.index.query(
-            vector=vector,
-            top_k=top_k,
-            namespace=self.namespace,
-            filter=strict_filter,
-            include_metadata=True,
-        )
+        try:
+            response = self.index.query(
+                vector=vector,
+                top_k=top_k,
+                namespace=self.namespace,
+                filter=strict_filter,
+                include_metadata=True,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Pinecone query unavailable for category=%s; returning no matches. error=%s",
+                category,
+                exc,
+            )
+            return []
         matches = list(response.matches)
         self.logger.info(
             "Pinecone returned %d matches for category=%s with db filter db=%s",
@@ -101,11 +109,15 @@ class PineconeService:
 
     def _embed_query(self, query: str) -> list[float]:
         self.logger.debug("Embedding query for Pinecone retrieval")
-        embeddings = self.client.inference.embed(
-            model=self.embed_model,
-            inputs=[query],
-            parameters={"input_type": "query", "truncate": "END"},
-        )
+        try:
+            embeddings = self.client.inference.embed(
+                model=self.embed_model,
+                inputs=[query],
+                parameters={"input_type": "query", "truncate": "END"},
+            )
+        except Exception as exc:
+            self.logger.warning("Pinecone embedding unavailable; returning no retrieval vector. error=%s", exc)
+            return []
         return embeddings[0]["values"]
 
     def fetch_top_columns(
@@ -117,6 +129,8 @@ class PineconeService:
     ) -> list[RetrievedColumn]:
         self.logger.info("Fetching top similar columns from Pinecone")
         vector = self._embed_query(query)
+        if not vector:
+            return []
         matches = self._query_with_db_fallback(vector, top_k * initial_multiplier, "col")
 
         raw_matches = []
@@ -191,6 +205,8 @@ class PineconeService:
     def fetch_top_tables(self, query: str, metadata_service: MetadataService, top_k: int) -> list[RetrievedTable]:
         self.logger.info("Fetching top similar tables from Pinecone")
         vector = self._embed_query(query)
+        if not vector:
+            return []
         matches = self._query_with_db_fallback(vector, top_k, "table")
 
         table_names = []

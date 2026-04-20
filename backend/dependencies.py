@@ -12,6 +12,7 @@ from fastapi import Request
 from .services.classifier_service import ClassifierService
 from .services.guard_service import GuardService
 from .services.metadata_service import MetadataService
+from .services.observability_service import ObservabilityService
 from .services.neo4j_service import Neo4jService
 from .services.pinecone_service import PineconeService
 from .services.sql_execution_service import SqlExecutionService
@@ -42,6 +43,10 @@ def get_neo4j_service(request: Request) -> Neo4jService:
 
 def get_metadata_service(request: Request) -> MetadataService:
     return request.app.state.metadata_service  # type: ignore[return-value]
+
+
+def get_observability_service(request: Request) -> ObservabilityService:
+    return request.app.state.observability_service  # type: ignore[return-value]
 
 
 def get_sql_execution_service(request: Request) -> SqlExecutionService:

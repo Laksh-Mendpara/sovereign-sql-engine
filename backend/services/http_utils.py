@@ -20,6 +20,8 @@ def post_json(url: str, payload: dict, headers: dict[str, str] | None = None, ti
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code} for {url}: {body}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Connection error for {url}: {exc.reason}") from exc
 
 
 def get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 120) -> dict:
@@ -33,3 +35,5 @@ def get_json(url: str, headers: dict[str, str] | None = None, timeout: int = 120
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code} for {url}: {body}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Connection error for {url}: {exc.reason}") from exc

@@ -31,6 +31,18 @@ class PipelineRequest(BaseModel):
         return stripped
 
 
+class FeedbackRequest(BaseModel):
+    request_id: str
+    trace_id: Optional[str] = None
+    query: str
+    response: str
+    feedback_type: str = Field(default="thumbs_down")
+    comment: Optional[str] = None
+    rating: Optional[int] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
 # ── Inner result schemas ───────────────────────────────────────────────────────
 
 class GuardResultSchema(BaseModel):
@@ -130,6 +142,11 @@ class ErrorResponse(BaseModel):
     detail: Optional[str] = None
     request_id: Optional[str] = None
     trace_id: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    status: str
+    detail: Optional[str] = None
 
 
 # ── SSE Event payloads ─────────────────────────────────────────────────────────

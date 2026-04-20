@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .services.classifier_service import ClassifierService
     from .services.guard_service import GuardService
     from .services.metadata_service import MetadataService
+    from .services.observability_service import ObservabilityService
     from .services.neo4j_service import Neo4jService
     from .services.pinecone_service import PineconeService
     from .services.sql_execution_service import SqlExecutionService
@@ -98,6 +99,7 @@ class SSEPipelineExecutor:
         metadata_service: MetadataService,
         sql_execution_service: SqlExecutionService,
         runpod_service: RunpodService,
+        observability_service: ObservabilityService,
     ) -> None:
         self.cfg = settings
         self.guard = guard_service
@@ -107,7 +109,9 @@ class SSEPipelineExecutor:
         self.metadata = metadata_service
         self.sql_executor = sql_execution_service
         self.runpod = runpod_service
+        self.observability = observability_service
         self.metrics: MetricsCollector = get_metrics()
+        self._audit_state: dict[str, Any] = {}
 
     # ── Public streaming entry point ───────────────────────────────────────────
 
@@ -128,6 +132,13 @@ class SSEPipelineExecutor:
         timer = StageTimer()
         seq = 0
         self.metrics.requests_total.inc()
+        self._audit_state = {
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "query": query,
+            "execution_status": "running",
+            "terminal_state": "running",
+        }
 
         def _emit(event_name: str, payload: Any) -> None:
             """Thread-safe: can be called from to_thread callbacks or coroutines."""
@@ -184,6 +195,15 @@ class SSEPipelineExecutor:
             # Hard timeout — cancel all outstanding work
             for t in (guard_task, classify_task, retrieval_task, watcher):
                 t.cancel()
+            self._audit_state.update(
+                {
+                    "execution_status": "timeout",
+                    "terminal_state": "timeout",
+                    "error_type": "timeout",
+                    "error_message": f"Pipeline did not complete within {self.cfg.total_pipeline_timeout}s",
+                }
+            )
+            await asyncio.to_thread(self.observability.upsert_request_record, dict(self._audit_state))
             error_payload = SSEErrorPayload(
                 error="pipeline_timeout",
                 detail=f"Pipeline did not complete within {self.cfg.total_pipeline_timeout}s",
@@ -197,6 +217,7 @@ class SSEPipelineExecutor:
             # Client disconnected — cancel remaining work
             for t in (guard_task, classify_task, retrieval_task, watcher):
                 t.cancel()
+            await asyncio.to_thread(self.observability.upsert_request_record, dict(self._audit_state))
             logger.info("sse.client_disconnected", extra={"request_id": request_id})
             return
 
@@ -218,6 +239,7 @@ class SSEPipelineExecutor:
         seq += 1
         yield {"event": "pipeline.complete", "data": complete_payload.model_dump_json(), "id": str(seq)}
 
+        await asyncio.to_thread(self.observability.upsert_request_record, dict(self._audit_state))
         self.metrics.total_latency.observe(timer.total_ms)
         logger.info(
             "sse.pipeline.done",
@@ -247,9 +269,23 @@ class SSEPipelineExecutor:
                 reason=result.reason,
                 latency_ms=elapsed,
             ))
+            self._audit_state.update(
+                {
+                    "guard_allowed": result.allowed,
+                    "guard_reason": result.reason,
+                }
+            )
             return result
         except Exception as exc:
             logger.exception("sse.guard.error")
+            self._audit_state.update(
+                {
+                    "execution_status": "error",
+                    "terminal_state": "error",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
+            )
             emit("pipeline.error", SSEErrorPayload(error="guard_error", detail=str(exc)))
             raise
 
@@ -276,9 +312,23 @@ class SSEPipelineExecutor:
                 reason=result.reason,
                 latency_ms=elapsed,
             ))
+            self._audit_state.update(
+                {
+                    "classification_label": result.label,
+                    "classification_reason": result.reason,
+                }
+            )
             return result
         except Exception as exc:
             logger.exception("sse.classifier.error")
+            self._audit_state.update(
+                {
+                    "execution_status": "error",
+                    "terminal_state": "error",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
+            )
             emit("pipeline.error", SSEErrorPayload(error="classifier_error", detail=str(exc)))
             raise
 
@@ -306,6 +356,12 @@ class SSEPipelineExecutor:
             if not guard.allowed:
                 self.metrics.requests_guard_blocked.inc()
                 logger.warning("sse.guard_blocked", extra={"reason": guard.reason})
+                self._audit_state.update(
+                    {
+                        "execution_status": "blocked_guardrail",
+                        "terminal_state": "guardrail_blocked",
+                    }
+                )
                 return  # pipeline.complete will be assembled by the watcher
 
             # Early-exit: out of topic
@@ -313,6 +369,12 @@ class SSEPipelineExecutor:
                 self.metrics.requests_out_of_topic.inc()
                 self.metrics.inc_label("out_of_topic")
                 logger.info("sse.out_of_topic")
+                self._audit_state.update(
+                    {
+                        "execution_status": "blocked_out_of_topic",
+                        "terminal_state": "out_of_topic",
+                    }
+                )
                 return
 
             self.metrics.inc_label(classification.label)
@@ -323,6 +385,12 @@ class SSEPipelineExecutor:
             selected = sorted(seed)
 
             if not selected:
+                self._audit_state.update(
+                    {
+                        "execution_status": "skipped",
+                        "terminal_state": "skipped",
+                    }
+                )
                 return
 
             schema_tables = await self._neo4j_and_emit(selected, classification.label, timer, emit)
@@ -331,15 +399,31 @@ class SSEPipelineExecutor:
             schema_sql = await self._schema_and_emit(schema_tables, timer, emit)
 
             if not schema_sql:
+                self._audit_state.update(
+                    {
+                        "execution_status": "skipped",
+                        "terminal_state": "skipped",
+                    }
+                )
                 return
 
             # 6. RunPod — terminal stage
             await self._runpod_and_emit(query, schema_sql, timer, emit)
 
-        except Exception as exc:
-            logger.exception("sse.retrieval_chain.error")
-            emit("pipeline.error", SSEErrorPayload(error="retrieval_error", detail=str(exc)))
+        except asyncio.CancelledError:
             raise
+        except Exception as exc:
+            logger.warning("sse.retrieval_chain.error", extra={"error": str(exc)})
+            emit("pipeline.error", SSEErrorPayload(error="retrieval_error", detail=str(exc)))
+            self._audit_state.update(
+                {
+                    "execution_status": "error",
+                    "terminal_state": "error",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
+            )
+            return
 
     # ── Pinecone sub-step ─────────────────────────────────────────────────────
 
@@ -349,31 +433,38 @@ class SSEPipelineExecutor:
         timer: StageTimer,
         emit: Any,
     ) -> tuple[list[RetrievedColumn], list[RetrievedTable]]:
-        with timed_span("pinecone_ms", timer, self.metrics.pinecone_latency):
-            logger.info("sse.pinecone.start")
-            col_task = asyncio.create_task(
-                asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.pinecone.fetch_top_columns,
-                        query, self.metadata,
-                        self.cfg.top_k_columns,
-                        self.cfg.initial_retrieval_multiplier,
-                    ),
-                    timeout=self.cfg.pinecone_timeout,
+        try:
+            with timed_span("pinecone_ms", timer, self.metrics.pinecone_latency):
+                logger.info("sse.pinecone.start")
+                col_task = asyncio.create_task(
+                    asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.pinecone.fetch_top_columns,
+                            query, self.metadata,
+                            self.cfg.top_k_columns,
+                            self.cfg.initial_retrieval_multiplier,
+                        ),
+                        timeout=self.cfg.pinecone_timeout,
+                    )
                 )
-            )
-            tbl_task = asyncio.create_task(
-                asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.pinecone.fetch_top_tables,
-                        query, self.metadata,
-                        self.cfg.top_k_tables,
-                    ),
-                    timeout=self.cfg.pinecone_timeout,
+                tbl_task = asyncio.create_task(
+                    asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.pinecone.fetch_top_tables,
+                            query, self.metadata,
+                            self.cfg.top_k_tables,
+                        ),
+                        timeout=self.cfg.pinecone_timeout,
+                    )
                 )
-            )
-            cols, tbls = await asyncio.gather(col_task, tbl_task)
-            logger.info("sse.pinecone.done", extra={"cols": len(cols), "tbls": len(tbls)})
+                cols, tbls = await asyncio.gather(col_task, tbl_task)
+                logger.info("sse.pinecone.done", extra={"cols": len(cols), "tbls": len(tbls)})
+        except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+            logger.warning("sse.pinecone.timeout", extra={"error": str(exc)})
+            cols, tbls = [], []
+        except Exception as exc:
+            logger.warning("sse.pinecone.error", extra={"error": str(exc)})
+            cols, tbls = [], []
 
         elapsed = timer.as_dict().get("pinecone_ms", 0.0)
         emit("pinecone", SSEPineconePayload(
@@ -381,6 +472,10 @@ class SSEPipelineExecutor:
             tables=[RetrievedTableSchema(**asdict(t)) for t in tbls],
             latency_ms=elapsed,
         ))
+        self._audit_state["metadata_json"] = {
+            "retrieved_columns": [asdict(c) for c in cols],
+            "retrieved_tables": [asdict(t) for t in tbls],
+        }
         return cols, tbls
 
     # ── Neo4j sub-step ────────────────────────────────────────────────────────
@@ -405,6 +500,9 @@ class SSEPipelineExecutor:
             schema_tables=result,
             latency_ms=elapsed,
         ))
+        metadata = self._audit_state.get("metadata_json") or {}
+        metadata["schema_tables"] = result
+        self._audit_state["metadata_json"] = metadata
         return result
 
     # ── Schema sub-step ───────────────────────────────────────────────────────
@@ -428,6 +526,7 @@ class SSEPipelineExecutor:
             schema_sql=schema_sql,
             latency_ms=elapsed,
         ))
+        self._audit_state["schema_sql"] = schema_sql
         return schema_sql
 
     # ── RunPod sub-step ───────────────────────────────────────────────────────
@@ -455,12 +554,25 @@ class SSEPipelineExecutor:
             runpod_response=response,
             latency_ms=elapsed,
         ))
+        self._audit_state.update(
+            {
+                "generated_sql": generated_sql,
+                "raw_runpod_response_json": response,
+            }
+        )
         execution_plan = plan_sql_execution(generated_sql)
         emit("execution.remark", SSEExecutionRemarkPayload(
             remark=execution_plan.remark,
             execution_sql=execution_plan.execution_sql,
             blocked_by_firewall=execution_plan.blocked_by_firewall,
         ))
+        self._audit_state.update(
+            {
+                "execution_sql": execution_plan.execution_sql,
+                "execution_status": "blocked_firewall" if execution_plan.blocked_by_firewall else "success",
+                "terminal_state": "firewall_blocked" if execution_plan.blocked_by_firewall else "complete",
+            }
+        )
         execution_data = None
         if execution_plan.execution_sql and not execution_plan.blocked_by_firewall:
             try:
@@ -469,10 +581,24 @@ class SSEPipelineExecutor:
                     execution_data = None
             except Exception as exc:
                 logger.warning("sse.sql_execute.failed", extra={"error": str(exc)})
+                self._audit_state.update(
+                    {
+                        "execution_status": "error",
+                        "terminal_state": "error",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    }
+                )
         emit("execution.data", SSEExecutionDataPayload(
             execution_sql=execution_plan.execution_sql,
             execution_data=execution_data,
         ))
+        self._audit_state.update(
+            {
+                "execution_result_json": execution_data,
+                "execution_row_count": len(execution_data or []),
+            }
+        )
 
     async def _execute_sql(self, sql: str) -> list[dict[str, Any]]:
         logger.info("sse.sql_execute.start")

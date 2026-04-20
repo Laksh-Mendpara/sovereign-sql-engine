@@ -44,21 +44,32 @@ class ClassifierService:
                 label="out_of_topic",
                 reason="Arithmetic question, not a database query",
                 raw_response="heuristic: arithmetic question",
-            )
+        )
 
         self.logger.info("Classifying query difficulty/topic")
-        raw = self.client.chat(build_classifier_messages(query), max_tokens=128, temperature=0.0)
-        self.logger.debug("Classifier response: %s", raw)
-        parsed = parse_classifier_json(raw)
-        label = str(parsed.get("label", "")).strip().lower().replace(" ", "_")
-        if label not in {"easy", "difficult", "out_of_topic"}:
-            lowered = raw.lower()
-            if "out_of_topic" in lowered or "out of topic" in lowered:
-                label = "out_of_topic"
-            elif "difficult" in lowered or "hard" in lowered or "complex" in lowered:
-                label = "difficult"
-            else:
-                label = "easy"
+        try:
+            raw = self.client.chat(build_classifier_messages(query), max_tokens=128, temperature=0.0)
+            self.logger.debug("Classifier response: %s", raw)
+            parsed = parse_classifier_json(raw)
+            label = str(parsed.get("label", "")).strip().lower().replace(" ", "_")
+            if label not in {"easy", "difficult", "out_of_topic"}:
+                lowered = raw.lower()
+                if "out_of_topic" in lowered or "out of topic" in lowered:
+                    label = "out_of_topic"
+                elif "difficult" in lowered or "hard" in lowered or "complex" in lowered:
+                    label = "difficult"
+                else:
+                    label = "easy"
 
-        reason = str(parsed.get("reason", "")).strip() or raw.strip()
-        return ClassificationResult(label=label, reason=reason, raw_response=raw)
+            reason = str(parsed.get("reason", "")).strip() or raw.strip()
+            return ClassificationResult(label=label, reason=reason, raw_response=raw)
+        except Exception as exc:
+            self.logger.warning(
+                "Classifier service unavailable; falling back to conservative continuation. error=%s",
+                exc,
+            )
+            return ClassificationResult(
+                label="difficult",
+                reason="Classifier service unavailable; continuing with retrieval fallback",
+                raw_response=f"error: {exc}",
+            )

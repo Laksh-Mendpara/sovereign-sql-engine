@@ -29,6 +29,7 @@ from .services.classifier_service import ClassifierService
 from .services.guard_service import GuardService
 from .services.metadata_service import MetadataService
 from .services.modal_chat import ModalChatClient
+from .services.observability_service import ObservabilityService
 from .services.neo4j_service import Neo4jService
 from .services.pinecone_service import PineconeService
 from .services.sql_execution_service import SqlExecutionService
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "classifier_service": ClassifierService(classifier_client, logger),
             "metadata_service": MetadataService(settings.sqlite_conn_str, logger),
             "sql_execution_service": SqlExecutionService(settings.sqlite_data_conn_str, logger),
+            "observability_service": ObservabilityService(settings.sqlite_observability_conn_str, logger),
             "pinecone_service": PineconeService(
                 api_key=settings.pinecone_api_key,
                 index_name=settings.pinecone_index_name,
@@ -109,6 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             ("neo4j", "neo4j_service"),
             ("metadata", "metadata_service"),
             ("sqlite_data", "sql_execution_service"),
+            ("observability", "observability_service"),
         ]:
             try:
                 getattr(svcs[closer], "close")()

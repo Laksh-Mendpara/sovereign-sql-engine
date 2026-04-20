@@ -48,6 +48,7 @@ class BackendSettings(BaseSettings):
     sqlite_port: str = Field(alias="SQLITE_PORT")
     sqlite_db: str = Field(alias="SQLITE_DB")
     sqlite_metadata_db: str = Field(alias="SQLITE_METADATA_DB")
+    sqlite_observability_db: str = Field(alias="SQLITE_LLM_OBSERVABILITY_DB")
     sqlite_api_key: str = Field(alias="SQLITE_API_KEY")
 
     pinecone_api_key: str = Field(alias="PINECONE_API_KEY")
@@ -101,6 +102,13 @@ class BackendSettings(BaseSettings):
         return (
             f"sqlitecloud://{self.sqlite_host}:{self.sqlite_port}/"
             f"{self.sqlite_db}?apikey={self.sqlite_api_key}"
+        )
+
+    @property
+    def sqlite_observability_conn_str(self) -> str:
+        return (
+            f"sqlitecloud://{self.sqlite_host}:{self.sqlite_port}/"
+            f"{self.sqlite_observability_db}?apikey={self.sqlite_api_key}"
         )
 
     @property
