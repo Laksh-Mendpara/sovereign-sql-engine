@@ -15,7 +15,12 @@ RUN python3 -m pip install --upgrade pip && \
 # Install additional Python dependencies (after vLLM to avoid PyTorch version conflicts)
 COPY builder/requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install --upgrade -r /requirements.txt
+    apt-get update && apt-get install -y git && \
+    python3 -m pip install --upgrade -r /requirements.txt && \
+    git clone https://github.com/LMCache/LMCache.git /LMCache && \
+    cd /LMCache && \
+    python3 -m pip install --no-build-isolation -e . && \
+    rm -rf /var/lib/apt/lists/*
 
 ARG VLLM_NIGHTLY="false"
 
