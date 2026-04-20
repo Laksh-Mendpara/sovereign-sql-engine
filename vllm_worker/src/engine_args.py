@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import glob
 from urllib.parse import urlparse
 from typing import get_origin, get_args
 from torch.cuda import device_count
@@ -363,7 +364,11 @@ def _resolve_max_model_len(model, trust_remote_code=False, revision=None):
 
 
 def _resolve_cached_snapshot_path(model_id: str, cache_root: str | None = None) -> str | None:
-    """Resolve a Hugging Face snapshot path from the local RunPod cache if available."""
+    """Resolve a Hugging Face snapshot path from the local RunPod cache if available.
+    
+    Verifies that the snapshot directory contains actual weight files to avoid
+    loading from a broken/incomplete cache.
+    """
     if not model_id or "/" not in model_id:
         return None
 
@@ -376,11 +381,18 @@ def _resolve_cached_snapshot_path(model_id: str, cache_root: str | None = None) 
     refs_main = os.path.join(model_root, "refs", "main")
     snapshots_dir = os.path.join(model_root, "snapshots")
 
+    def has_weights(path):
+        patterns = ["*.safetensors", "*.bin", "*.pt", "pytorch_model.bin", "model.safetensors", "*.tensors"]
+        for p in patterns:
+            if glob.glob(os.path.join(path, p)):
+                return True
+        return False
+
     if os.path.isfile(refs_main):
         with open(refs_main, "r") as f:
             snapshot_hash = f.read().strip()
         candidate = os.path.join(snapshots_dir, snapshot_hash)
-        if os.path.isdir(candidate):
+        if os.path.isdir(candidate) and has_weights(candidate):
             logging.info("Resolved cached snapshot for %s: %s", model_id, candidate)
             return candidate
 
@@ -392,10 +404,16 @@ def _resolve_cached_snapshot_path(model_id: str, cache_root: str | None = None) 
     ]
     if not versions:
         return None
+    
+    # Sort to get the latest/alphabetically first, but filter for those with weights
     versions.sort()
-    chosen = os.path.join(snapshots_dir, versions[0])
-    logging.info("Resolved fallback cached snapshot for %s: %s", model_id, chosen)
-    return chosen
+    for v in versions:
+        candidate = os.path.join(snapshots_dir, v)
+        if has_weights(candidate):
+            logging.info("Resolved fallback cached snapshot for %s: %s", model_id, candidate)
+            return candidate
+
+    return None
 
 
 def _sanitize_hf_overrides(hf_overrides: dict) -> dict | None:

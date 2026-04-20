@@ -19,12 +19,16 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 ARG VLLM_NIGHTLY="false"
 
-ENV MODEL_NAME=$MODEL_NAME \
-    MODEL_REVISION=$MODEL_REVISION \
-    TOKENIZER_NAME=$TOKENIZER_NAME \
-    TOKENIZER_REVISION=$TOKENIZER_REVISION \
-    BASE_PATH=$BASE_PATH \
-    QUANTIZATION=$QUANTIZATION \
+ENV MODEL_NAME="ByteMaster01/arctic-text2sql-r1-7b-gptq8" \
+    MODEL_REVISION="main" \
+    TOKENIZER_NAME="" \
+    TOKENIZER_REVISION="" \
+    BASE_PATH="/" \
+    QUANTIZATION="gptq" \
+    MAX_MODEL_LEN=4096 \
+    ENFORCE_EAGER="true" \
+    UPSTASH_REDIS_REST_URL="https://square-grubworm-103218.upstash.io" \
+    UPSTASH_REDIS_REST_TOKEN="<your_upstash_token>" \
     HF_HUB_OFFLINE=0 \
     TRANSFORMERS_OFFLINE=0 \
     HF_HUB_ENABLE_HF_TRANSFER=0 \
