@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ..services.metadata_service import MetadataService
 from ..services.neo4j_service import Neo4jService
@@ -27,7 +27,7 @@ from ..dependencies import (
     get_settings,
 )
 from ..logging_config import get_logger
-from ..metrics import get_metrics
+from ..metrics import get_metrics, render_prometheus_metrics
 from ..models import HealthResponse, ReadinessResponse, ServiceStatus
 
 router = APIRouter(tags=["observability"])
@@ -108,6 +108,24 @@ async def ready(
 )
 async def metrics_snapshot() -> dict[str, Any]:
     return get_metrics().snapshot()
+
+
+@router.get(
+    "/metrics/prometheus",
+    summary="Prometheus metrics",
+    description="Prometheus exposition format for scraping and Grafana Cloud remote_write.",
+)
+async def metrics_prometheus() -> PlainTextResponse:
+    try:
+        return PlainTextResponse(render_prometheus_metrics(), media_type="text/plain; version=0.0.4")
+    except Exception as exc:
+        logger.exception("metrics.prometheus_render_failed", extra={"error": str(exc)})
+        fallback = (
+            "# HELP sovereign_sql_exporter_up Exporter health.\n"
+            "# TYPE sovereign_sql_exporter_up gauge\n"
+            "sovereign_sql_exporter_up 0\n"
+        )
+        return PlainTextResponse(fallback, media_type="text/plain; version=0.0.4")
 
 
 # ── Service ping helpers (each runs in a thread to stay non-blocking) ──────────

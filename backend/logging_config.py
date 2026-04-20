@@ -25,6 +25,8 @@ _request_id: ContextVar[str] = ContextVar("request_id", default="")
 _trace_id: ContextVar[str] = ContextVar("trace_id", default="")
 _span_id: ContextVar[str] = ContextVar("span_id", default="")
 _span_name: ContextVar[str] = ContextVar("span_name", default="")
+_service_name: ContextVar[str] = ContextVar("service_name", default="sovereign-sql-backend")
+_environment: ContextVar[str] = ContextVar("environment", default="development")
 
 
 # ── Context helpers ────────────────────────────────────────────────────────────
@@ -69,6 +71,11 @@ def new_span_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+def set_service_context(service_name: str, environment: str) -> None:
+    _service_name.set(service_name)
+    _environment.set(environment)
+
+
 # ── JSON log formatter ─────────────────────────────────────────────────────────
 
 # Fields that are built-in LogRecord attributes — never re-emitted as extras
@@ -88,6 +95,8 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": message,
+            "service_name": _service_name.get(),
+            "environment": _environment.get(),
             "request_id": _request_id.get(),
             "trace_id": _trace_id.get(),
             "span_id": _span_id.get(),
@@ -116,9 +125,15 @@ class JsonFormatter(logging.Formatter):
 
 # ── Root logger setup ──────────────────────────────────────────────────────────
 
-def configure_logging(level: str = "INFO", use_json: bool = True) -> None:
+def configure_logging(
+    level: str = "INFO",
+    use_json: bool = True,
+    service_name: str = "sovereign-sql-backend",
+    environment: str = "development",
+) -> None:
     """Configure root logger once at application startup."""
     log_level = getattr(logging, level.upper(), logging.INFO)
+    set_service_context(service_name, environment)
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(log_level)

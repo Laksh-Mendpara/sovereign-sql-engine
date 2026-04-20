@@ -8,20 +8,27 @@ import threading
 from typing import Any
 
 import sqlitecloud
+from sqlitecloud.exceptions import SQLiteCloudException
 
 from ..temp import create_observability_tables
 
 
 class ObservabilityService:
     def __init__(self, conn_str: str, logger: logging.Logger) -> None:
-        self.conn = sqlitecloud.connect(conn_str)
+        self.conn_str = conn_str
         self._lock = threading.Lock()
         self.logger = logger
-        create_observability_tables(conn_str)
+        try:
+            create_observability_tables(conn_str)
+        except Exception as exc:
+            self.logger.warning(
+                "observability.schema_init_failed",
+                extra={"error": str(exc)},
+            )
 
     def close(self) -> None:
-        with self._lock:
-            self.conn.close()
+        # Connections are opened per write, so there is nothing persistent to close.
+        return None
 
     @staticmethod
     def _json(value: Any) -> str | None:
@@ -33,12 +40,33 @@ class ObservabilityService:
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
         with self._lock:
-            self.conn.execute(sql, params)
-            if hasattr(self.conn, "commit"):
-                self.conn.commit()
+            conn = sqlitecloud.connect(self.conn_str)
+            try:
+                conn.execute(sql, params)
+                if hasattr(conn, "commit"):
+                    conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def _execute_safe(self, sql: str, params: tuple[Any, ...], action: str) -> None:
+        try:
+            self._execute(sql, params)
+        except SQLiteCloudException as exc:
+            self.logger.warning(
+                "observability.write_failed",
+                extra={"action": action, "error": str(exc)},
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "observability.write_failed",
+                extra={"action": action, "error": str(exc)},
+            )
 
     def upsert_request_record(self, record: dict[str, Any]) -> None:
-        self._execute(
+        self._execute_safe(
             """
             INSERT INTO request_records (
                 request_id, trace_id, query, prompt_json, guard_allowed, guard_reason,
@@ -88,6 +116,7 @@ class ObservabilityService:
                 self._json(record.get("raw_runpod_response_json")),
                 self._json(record.get("metadata_json")),
             ),
+            "upsert_request_record",
         )
 
     def record_validation_failure(
@@ -104,7 +133,7 @@ class ObservabilityService:
         stage: str | None = None,
         raw_payload_json: Any = None,
     ) -> None:
-        self._execute(
+        self._execute_safe(
             """
             INSERT INTO validation_failures (
                 request_id, trace_id, input_text, expected_schema, actual_value,
@@ -123,6 +152,7 @@ class ObservabilityService:
                 stage,
                 self._json(raw_payload_json),
             ),
+            "record_validation_failure",
         )
 
     def record_logical_failure(
@@ -139,7 +169,7 @@ class ObservabilityService:
         correction_json: Any = None,
         notes: str | None = None,
     ) -> None:
-        self._execute(
+        self._execute_safe(
             """
             INSERT INTO logical_failures (
                 request_id, trace_id, query, model_output, expected_output, is_correct,
@@ -158,6 +188,7 @@ class ObservabilityService:
                 self._json(correction_json),
                 notes,
             ),
+            "record_logical_failure",
         )
 
     def record_user_feedback(
@@ -173,7 +204,7 @@ class ObservabilityService:
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        self._execute(
+        self._execute_safe(
             """
             INSERT INTO user_feedback (
                 request_id, trace_id, query, response, feedback_type, comment,
@@ -191,4 +222,5 @@ class ObservabilityService:
                 user_id,
                 session_id,
             ),
+            "record_user_feedback",
         )

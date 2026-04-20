@@ -36,7 +36,7 @@ from .services.sql_execution_service import SqlExecutionService
 from .services.runpod_service import RunpodService
 
 from .config import BackendSettings, get_settings
-from .logging_config import configure_logging, get_logger, get_request_id, get_trace_id
+from .logging_config import configure_logging, get_logger, get_request_id, get_trace_id, set_service_context
 from .metrics import get_metrics
 from .middleware import RequestContextMiddleware, TimingMiddleware
 from .routes.health import router as health_router
@@ -129,7 +129,13 @@ def create_app(settings: BackendSettings | None = None) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
-    configure_logging(level=settings.log_level, use_json=not settings.debug)
+    configure_logging(
+        level=settings.log_level,
+        use_json=not settings.debug,
+        service_name=settings.app_name,
+        environment="development" if settings.debug else "production",
+    )
+    set_service_context(settings.app_name, "development" if settings.debug else "production")
 
     app = FastAPI(
         title="Sovereign SQL Engine — Pipeline API",
@@ -215,7 +221,13 @@ app = create_app()
 def run_server() -> None:
     """Entry point: ``python -m backend.app`` or pyproject ``[project.scripts]``."""
     cfg = get_settings()
-    configure_logging(level=cfg.log_level, use_json=not cfg.debug)
+    configure_logging(
+        level=cfg.log_level,
+        use_json=not cfg.debug,
+        service_name=cfg.app_name,
+        environment="development" if cfg.debug else "production",
+    )
+    set_service_context(cfg.app_name, "development" if cfg.debug else "production")
     uvicorn.run(
         "backend.app:app",
         host=cfg.host,
