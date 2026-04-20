@@ -209,3 +209,4 @@ __marimo__/
 models/
 
 node_modules
+infra/monitoring/grafana-cloud.env
