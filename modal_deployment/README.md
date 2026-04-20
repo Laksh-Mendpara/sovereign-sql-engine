@@ -37,6 +37,7 @@ graph LR
 | **uv** | [Install](https://docs.astral.sh/uv/getting-started/installation/) |
 | **Python** | 3.12+ |
 | **HuggingFace Token** | Optional — Phi-4-mini-instruct is public, but speeds up downloads. Set via `modal secret create huggingface-secret HF_TOKEN=<your-token>` |
+| **Observability Secret** | Required for Grafana Cloud export. Create a Modal secret named `grafana-cloud-observability` or set `MODAL_OBSERVABILITY_SECRET_NAME` before deploy. Modal uses the OTLP keys from this secret. |
 
 ## Quick Start
 
@@ -57,6 +58,43 @@ This will:
 - Build the container image (first time takes ~5 min for vLLM install)
 - Download the model weights (~7.6 GB)
 - Deploy the server and print the live URL
+
+### 2a. Configure observability secrets
+
+Create a single Modal secret containing the credentials Modal should inject into both vLLM endpoints for observability export.
+
+Modal consumes the `OTEL_*` keys directly. If you also want to keep your Grafana Cloud Prometheus/Loki connection values in the same secret for convenience, you can store those too:
+
+```bash
+modal secret create grafana-cloud-observability \
+  OTEL_EXPORTER_OTLP_ENDPOINT=https://<your-grafana-cloud-otlp-endpoint> \
+  OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64-username-colon-api-key>" \
+  GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL=https://prometheus-prod-<region>.grafana.net/api/prom \
+  GRAFANA_CLOUD_PROM_USERNAME=<prometheus-username> \
+  GRAFANA_CLOUD_PROM_API_KEY=<prometheus-api-key> \
+  GRAFANA_CLOUD_LOKI_URL=https://logs-prod-<region>.grafana.net/loki/api/v1/push \
+  GRAFANA_CLOUD_LOKI_USERNAME=<loki-username> \
+  GRAFANA_CLOUD_LOKI_API_KEY=<loki-api-key>
+```
+
+If you want a different secret name, create it under that name and set:
+
+```bash
+export MODAL_OBSERVABILITY_SECRET_NAME=<your-secret-name>
+```
+
+The app attaches this secret to both vLLM function endpoints so logs, metrics, and traces can be exported consistently from every Modal deployment. In Grafana Cloud, logs are visible in Loki, while metrics land in Prometheus/Mimir.
+
+The Prometheus and Loki URL/credential fields above are optional convenience values for your secret. Modal's built-in observability export uses the OpenTelemetry endpoint and headers.
+
+The image already enables the OpenTelemetry exporters for all three signals:
+
+- `OTEL_TRACES_EXPORTER=otlp`
+- `OTEL_METRICS_EXPORTER=otlp`
+- `OTEL_LOGS_EXPORTER=otlp`
+- `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
+
+So the secret only needs to hold the endpoint and authorization header.
 
 ### 3. Test the deployment
 
@@ -120,11 +158,32 @@ All configuration is done via environment variables, set before running `modal d
 | `ENABLE_SNAPSHOTS` | `0` | Set to `1` to enable GPU memory snapshots (H100+ only) |
 | `SCALEDOWN_WINDOW` | `10` | Minutes to keep container alive after last request |
 | `MAX_CONCURRENT` | `32` | Max concurrent requests per container |
+| `MODAL_OBSERVABILITY_SECRET_NAME` | `grafana-cloud-observability` | Name of the Modal secret used for Grafana Cloud observability export |
 
 ### Example: Deploy with H100 and snapshots
 
 ```bash
 GPU_TYPE=H100 ENABLE_SNAPSHOTS=1 modal deploy app.py
+```
+
+### Example: Deploy with custom observability secret
+
+```bash
+MODAL_OBSERVABILITY_SECRET_NAME=my-grafana-secret modal deploy app.py
+```
+
+### Example: Create the observability secret
+
+```bash
+modal secret create grafana-cloud-observability \
+  OTEL_EXPORTER_OTLP_ENDPOINT=https://<your-grafana-cloud-otlp-endpoint> \
+  OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64-username-colon-api-key>"
+```
+
+If you already created the secret under a different name, point Modal at it with:
+
+```bash
+export MODAL_OBSERVABILITY_SECRET_NAME=<your-secret-name>
 ```
 
 ### Example: Deploy with longer context
