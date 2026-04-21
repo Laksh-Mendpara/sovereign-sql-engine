@@ -32,9 +32,14 @@ class PineconeService:
         self._db_filter_supported: bool | None = None
         self._db_filter_lock = threading.Lock()
         self.client = Pinecone(api_key=api_key)
+        
         if index_host:
+            # Sanitize host: A common deployment issue is providing https:// prefix
+            index_host = index_host.replace("https://", "").replace("http://", "").rstrip("/")
+            self.logger.info("Connecting to Pinecone via explicit host: %s", index_host)
             self.index = self.client.Index(host=index_host)
         else:
+            self.logger.info("Connecting to Pinecone via index name: %s", index_name)
             self.index = self.client.Index(name=index_name)
 
     @staticmethod
