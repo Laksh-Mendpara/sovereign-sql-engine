@@ -1,14 +1,22 @@
 import sys
 import os
+import logging
 import multiprocessing
 import traceback
 import time
 import threading
 import runpod
 from runpod import RunPodLogger
-import requests
 
-from opentelemetry import trace, metrics, _logs
+log = RunPodLogger()
+
+vllm_engine = None
+openai_engine = None
+
+# ---------------------------------------------------------------------------
+# OpenTelemetry Setup (Grafana Cloud OTLP) — always enabled
+# ---------------------------------------------------------------------------
+from opentelemetry import metrics as _otel_metrics, _logs
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -16,125 +24,189 @@ from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry._logs import SeverityNumber
 
-log = RunPodLogger()
+resource = Resource.create({
+    "service.name": os.getenv("OTEL_SERVICE_NAME", "vllm-worker"),
+})
 
-vllm_engine = None
-openai_engine = None
+# ── Logs ──────────────────────────────────────────────────────────────────
+_logger_provider = LoggerProvider(resource=resource)
+_logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
+_logs.set_logger_provider(_logger_provider)
 
-# OTEL Setup
-resource = Resource.create({"service.name": os.getenv("OTEL_SERVICE_NAME", "vllm-worker")})
+# Bridge: every logging.info / .warning / .error from vLLM, transformers,
+# etc. automatically flows to Grafana Loki via OTLP.
+logging.getLogger().addHandler(
+    LoggingHandler(level=logging.DEBUG, logger_provider=_logger_provider)
+)
 
-# 1. Logs Exporter
-logger_provider = LoggerProvider(resource=resource)
-logger_provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
-_logs.set_logger_provider(logger_provider)
-otel_logger = _logs.get_logger(__name__)
+# Direct OTLP logger for our own structured events
+otel_logger = _logs.get_logger("vllm.handler")
 
-# 2. Metrics Exporter
-# We use a 15-second export interval to maintain reasonable Grafana Cloud usage
-metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=15000)
-meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-metrics.set_meter_provider(meter_provider)
-meter = metrics.get_meter("vllm.engine")
+# ── Metrics ───────────────────────────────────────────────────────────────
+_metric_reader = PeriodicExportingMetricReader(
+    OTLPMetricExporter(), export_interval_millis=15_000
+)
+_meter_provider = MeterProvider(resource=resource, metric_readers=[_metric_reader])
+_otel_metrics.set_meter_provider(_meter_provider)
+meter = _otel_metrics.get_meter("vllm.engine")
 
-# Define industry-standard SLIs
-m_request_latency = meter.create_histogram("vllm.request_latency", unit="s", description="End-to-end request latency")
-m_ttft = meter.create_histogram("vllm.time_to_first_token", unit="s", description="Time to first token")
-m_tpot = meter.create_histogram("vllm.time_per_output_token", unit="s", description="Time per output token")
-m_prompt_tokens = meter.create_histogram("vllm.prompt_tokens", unit="count", description="Number of prompt tokens")
-m_output_tokens = meter.create_histogram("vllm.output_tokens", unit="count", description="Number of generation tokens")
-m_queue_time = meter.create_histogram("vllm.time_in_queue", unit="s", description="Time spent waiting for inference")
+logging.info(
+    "OTEL observability enabled → %s (service=%s)",
+    os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    os.getenv("OTEL_SERVICE_NAME", "vllm-worker"),
+)
 
-# Gauges tracked in background thread
-m_running_reqs = meter.create_gauge("vllm.requests.running", unit="count", description="Currently executing requests")
-m_gpu_util = meter.create_gauge("vllm.vram.utilization", unit="percent", description="KV cache VRM utilization")
-m_cpu_util = meter.create_gauge("vllm.cpu.utilization", unit="percent", description="CPU block utilization")
-m_cache_hits = meter.create_counter("vllm.cache.hits", unit="count", description="Number of KV prefix cache hits")
+# ---------------------------------------------------------------------------
+# Metric instruments
+# ---------------------------------------------------------------------------
+m_request_latency = meter.create_histogram(
+    "vllm.request_latency", unit="s",
+    description="End-to-end request latency",
+)
+m_ttft = meter.create_histogram(
+    "vllm.time_to_first_token", unit="s",
+    description="Time to first token",
+)
+m_tpot = meter.create_histogram(
+    "vllm.time_per_output_token", unit="s",
+    description="Time per output token (decode phase / token count)",
+)
+m_prompt_tokens = meter.create_histogram(
+    "vllm.prompt_tokens", unit="count",
+    description="Number of prompt tokens",
+)
+m_output_tokens = meter.create_histogram(
+    "vllm.output_tokens", unit="count",
+    description="Number of generation tokens",
+)
+m_queue_time = meter.create_histogram(
+    "vllm.time_in_queue", unit="s",
+    description="Time spent waiting for inference",
+)
+m_running_reqs = meter.create_gauge(
+    "vllm.requests.running", unit="count",
+    description="Currently executing requests",
+)
+m_gpu_util = meter.create_gauge(
+    "vllm.vram.utilization", unit="percent",
+    description="KV-cache VRAM utilization",
+)
+m_cpu_util = meter.create_gauge(
+    "vllm.cpu.utilization", unit="percent",
+    description="CPU KV-cache block utilization",
+)
+m_cache_hits = meter.create_counter(
+    "vllm.cache.hits", unit="count",
+    description="Number of KV prefix-cache hits",
+)
 
 
-def vllm_metrics_relay():
-    """Background thread to poll vLLM engine stats and update gauges."""
+# ---------------------------------------------------------------------------
+# Background thread: relay vLLM engine stats → OTEL gauges
+# ---------------------------------------------------------------------------
+def _vllm_metrics_relay():
+    """Poll vLLM engine internals every 15 s and push to OTEL gauges."""
     while True:
         try:
             time.sleep(15)
-            if vllm_engine is not None and hasattr(vllm_engine, "engine"):
-                # Safe access to AsyncLLMEngine internal stats if they are exposed
-                # vLLM metrics hook (StatLogger) generally stores this, but we can 
-                # extract simple stats easily from the engine stats or use HTTP if enabled.
-                if hasattr(vllm_engine.engine, "get_num_unfinished_requests"):
-                    m_running_reqs.set(vllm_engine.engine.get_num_unfinished_requests())
-                
-                # Fetch GPU cache usage from internal stat logger if available
-                stat_logger = getattr(vllm_engine.engine, "stat_logger", None)
-                if stat_logger and hasattr(stat_logger, "metrics"):
-                    mets = stat_logger.metrics
-                    if mets.get('gpu_cache_usage'):
-                        m_gpu_util.set(mets['gpu_cache_usage'] * 100.0)
-                    if mets.get('cpu_cache_usage'):
-                        m_cpu_util.set(mets['cpu_cache_usage'] * 100.0)
+            if vllm_engine is None or not hasattr(vllm_engine, "engine"):
+                continue
+
+            eng = vllm_engine.engine
+            if hasattr(eng, "get_num_unfinished_requests"):
+                m_running_reqs.set(eng.get_num_unfinished_requests())
+
+            stat_logger = getattr(eng, "stat_logger", None)
+            if stat_logger and hasattr(stat_logger, "metrics"):
+                mets = stat_logger.metrics
+                gpu = mets.get("gpu_cache_usage")
+                cpu = mets.get("cpu_cache_usage")
+                if gpu is not None:
+                    m_gpu_util.set(gpu * 100.0)
+                if cpu is not None:
+                    m_cpu_util.set(cpu * 100.0)
         except Exception:
-            pass # Suppress background thread errors
+            pass  # never crash the background thread
 
 
+# ---------------------------------------------------------------------------
+# Helper to emit structured OTEL logs safely
+# ---------------------------------------------------------------------------
+def _emit_log(body: str, attributes: dict | None = None, error: bool = False):
+    """Emit a structured log record to Grafana Loki via OTLP."""
+    try:
+        otel_logger.emit(
+            body=body,
+            severity_number=SeverityNumber.ERROR if error else SeverityNumber.INFO,
+            severity_text="ERROR" if error else "INFO",
+            attributes=attributes,
+        )
+    except Exception:
+        pass  # never break the handler over telemetry
+
+
+# ---------------------------------------------------------------------------
+# RunPod handler
+# ---------------------------------------------------------------------------
 async def handler(job):
     req_start_time = time.monotonic()
-    
+
     try:
         from utils import JobInput
+
         job_input = JobInput(job["input"])
         engine = openai_engine if job_input.openai_route else vllm_engine
-        
-        otel_logger.emit(
-            body=f"Started inference for job {job['id']}",
-            attributes={"job_id": job["id"], "openai_route": job_input.openai_route}
+
+        _emit_log(
+            f"Started inference for job {job['id']}",
+            {"job_id": job["id"], "openai_route": str(job_input.openai_route)},
         )
 
         results_generator = engine.generate(job_input)
-        
+
         first_token_time = None
-        last_output = None
         token_count = 0
-        
+
         async for batch in results_generator:
-            if not first_token_time:
+            if first_token_time is None:
                 first_token_time = time.monotonic()
-                m_ttft.record(first_token_time - req_start_time, {"job_id": job["id"]})
+                m_ttft.record(
+                    first_token_time - req_start_time, {"job_id": job["id"]}
+                )
             else:
                 token_count += 1
-            
-            last_output = batch
+
             yield batch
-            
+
         req_end_time = time.monotonic()
-        m_request_latency.record(req_end_time - req_start_time, {"job_id": job["id"]})
-        
-        if token_count > 0 and first_token_time:
+        total_latency = req_end_time - req_start_time
+        m_request_latency.record(total_latency, {"job_id": job["id"]})
+
+        if token_count > 0 and first_token_time is not None:
             tpot = (req_end_time - first_token_time) / token_count
             m_tpot.record(tpot, {"job_id": job["id"]})
             m_output_tokens.record(token_count, {"job_id": job["id"]})
-        
-        # When bypassing API server directly to vLLMEngine, the batch usually contains stats 
-        # based on vLLM's `RequestOutput` metrics.
-        # Fallback to simple dictionary parsing if using openai wrapper.
-        otel_logger.emit(
-            body=f"Completed inference for job {job['id']}",
-            attributes={"job_id": job["id"], "latency_s": req_end_time - req_start_time}
+
+        _emit_log(
+            f"Completed inference for job {job['id']}",
+            {"job_id": job["id"], "latency_s": str(round(total_latency, 4))},
         )
-        
+
     except Exception as e:
         error_str = str(e)
         full_traceback = traceback.format_exc()
 
         log.error(f"Error during inference: {error_str}")
         log.error(f"Full traceback:\n{full_traceback}")
-        
-        otel_logger.emit(
-            body=f"Inference error: {error_str}",
-            attributes={"job_id": job["id"], "traceback": full_traceback, "error": True}
+
+        _emit_log(
+            f"Inference error: {error_str}",
+            {"job_id": job["id"], "traceback": full_traceback},
+            error=True,
         )
 
-        # CUDA errors = worker is broken, exit to let RunPod spin up a healthy one
         if "CUDA" in error_str or "cuda" in error_str:
             log.error("Terminating worker due to CUDA/GPU error")
             sys.exit(1)
@@ -142,7 +214,9 @@ async def handler(job):
         yield {"error": error_str}
 
 
-# Only run in main process to prevent re-initialization when vLLM spawns worker subprocesses
+# ---------------------------------------------------------------------------
+# Main-process initialisation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__" or multiprocessing.current_process().name == "MainProcess":
     try:
         from engine import vLLMEngine, OpenAIvLLMEngine
@@ -150,9 +224,9 @@ if __name__ == "__main__" or multiprocessing.current_process().name == "MainProc
         vllm_engine = vLLMEngine()
         openai_engine = OpenAIvLLMEngine(vllm_engine)
         log.info("vLLM engines initialized successfully")
-        
+
         # Start background metrics relay
-        threading.Thread(target=vllm_metrics_relay, daemon=True).start()
+        threading.Thread(target=_vllm_metrics_relay, daemon=True).start()
     except Exception as e:
         log.error(f"Worker startup failed: {e}\n{traceback.format_exc()}")
         sys.exit(1)
