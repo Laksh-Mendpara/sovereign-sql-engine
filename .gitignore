@@ -210,3 +210,6 @@ models/
 
 node_modules
 infra/monitoring/grafana-cloud.env
+
+# Exception for frontend components matching generic ignore rules
+!frontend/src/lib/
