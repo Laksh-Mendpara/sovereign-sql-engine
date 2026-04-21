@@ -13,3 +13,9 @@ bitsandbytes>=0.45.0
 kernels
 torch-c-dlpack-ext
 redis>=5.0.0
+
+# Observability (Grafana Cloud / OTLP)
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+prometheus-client
