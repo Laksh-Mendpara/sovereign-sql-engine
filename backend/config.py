@@ -33,8 +33,8 @@ class BackendSettings(BaseSettings):
     cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
 
     # ── Per-stage timeouts (seconds) ──────────────────────────────────────────
-    guard_timeout: float = Field(default=30.0, alias="GUARD_TIMEOUT")
-    classifier_timeout: float = Field(default=30.0, alias="CLASSIFIER_TIMEOUT")
+    guard_timeout: float = Field(default=120.0, alias="GUARD_TIMEOUT")
+    classifier_timeout: float = Field(default=120.0, alias="CLASSIFIER_TIMEOUT")
     pinecone_timeout: float = Field(default=45.0, alias="PINECONE_TIMEOUT")
     neo4j_timeout: float = Field(default=30.0, alias="NEO4J_TIMEOUT")
     metadata_timeout: float = Field(default=20.0, alias="METADATA_TIMEOUT")
