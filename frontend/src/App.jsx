@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { streamPipeline, submitFeedback } from './lib/pipeline'
+import { streamPipeline, submitFeedback } from './lib/pipeline.js'
 
 const initialPipelineState = {
   query: '',
