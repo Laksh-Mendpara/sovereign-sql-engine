@@ -580,6 +580,13 @@ class SSEPipelineExecutor:
             generated_sql = self._extract_sql(response) 
 
             if difficulty_label == "difficult":
+                elapsed_1 = timer.as_dict().get("runpod_ms", 0.0)
+                emit("runpod", SSERunpodPayload(
+                    generated_sql=generated_sql,
+                    runpod_response=response.copy() if hasattr(response, "copy") else response,
+                    latency_ms=elapsed_1,
+                ))
+            
                 logger.info("sse.advanced_sql.start")
                 generated_sql = await self.advanced_sql.improve_sql(query, schema_sql, generated_sql)
                 response["advanced_model"] = True
@@ -619,6 +626,7 @@ class SSEPipelineExecutor:
                     execution_data = None
             except Exception as exc:
                 logger.warning("sse.sql_execute.failed", extra={"error": str(exc)})
+                emit("execution.error", {"error": str(exc), "stage": "execution"})
                 try:
                     logger.info("sse.advanced_sql.fixing")
                     fixed_sql = await self.advanced_sql.fix_sql(query, schema_sql, execution_plan.execution_sql, str(exc))

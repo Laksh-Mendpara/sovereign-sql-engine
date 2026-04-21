@@ -35,6 +35,7 @@ function formatValue(value) {
 
 function eventTone(type, data) {
   if (type === 'pipeline.error') return 'danger'
+  if (type === 'execution.error') return 'danger'
   if (type === 'pipeline.complete') return 'success'
   if (type === 'guard' && data?.allowed === false) return 'danger'
   if (type === 'classification' && data?.label === 'out_of_topic') return 'warning'
@@ -67,8 +68,10 @@ function eventSummary(type, data) {
       return data?.generated_sql ? 'Final SQL generated.' : 'No SQL returned.'
     case 'execution.remark':
       return data?.blocked_by_firewall
-        ? 'Firewall blocked execution.'
-        : data?.remark || 'Execution policy applied.'
+        ? 'Firewall blocked query.'
+        : data?.execution_sql ? 'Plan approved.' : 'No plan.'
+    case 'execution.error':
+      return `Execution Error: ${data?.error}`
     case 'execution.data':
       return data?.execution_data ? `Fetched ${data.execution_data.length} row(s).` : 'No rows returned.'
     case 'pipeline.complete':
@@ -98,6 +101,8 @@ function eventHeading(type) {
       return 'SQL Generation'
     case 'execution.remark':
       return 'Execution remark'
+    case 'execution.error':
+      return 'Execution Error'
     case 'execution.data':
       return 'Execution data'
     case 'pipeline.complete':
@@ -511,8 +516,10 @@ export default function App() {
                             ? (selectedEvent.data?.allowed ? 'Guardrail allowed' : 'Guardrail blocked')
                             : selectedEvent.type === 'classification'
                               ? (selectedEvent.data?.label === 'out_of_topic' ? 'Out of logic' : selectedEvent.data?.label || 'Unknown')
-                              : selectedEvent.type === 'execution.remark'
-                                ? (selectedEvent.data?.blocked_by_firewall ? 'Firewall block' : 'Execution allowed')
+                                : selectedEvent.type === 'execution.error'
+                                  ? 'Execution failed'
+                                  : selectedEvent.type === 'execution.remark'
+                                    ? (selectedEvent.data?.blocked_by_firewall ? 'Firewall block' : 'Execution allowed')
                                 : selectedEvent.type === 'runpod'
                                   ? (selectedEvent.data?.runpod_response?.fixed ? 'Self-Corrected (Qwen3)' 
                                     : selectedEvent.data?.runpod_response?.advanced_model ? 'Enhanced (Qwen3)' 
