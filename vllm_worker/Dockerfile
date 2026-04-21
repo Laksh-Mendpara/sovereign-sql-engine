@@ -1,28 +1,9 @@
-FROM nvidia/cuda:12.9.1-base-ubuntu22.04 
+FROM lmcache/vllm-openai:v0.4.3-lightweight
 
-RUN apt-get update -y \
-    && apt-get install -y python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN ldconfig /usr/local/cuda-12.9/compat/
-
-# Install vLLM with FlashInfer - use CUDA 12.8 PyTorch wheels (compatible with vLLM 0.15.1)
-RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install "vllm[flashinfer]==0.16.0" --extra-index-url https://download.pytorch.org/whl/cu129
-
-
-
-# Install additional Python dependencies (after vLLM to avoid PyTorch version conflicts)
+# Install additional Python dependencies
 COPY builder/requirements.txt /requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    apt-get update && apt-get install -y git && \
-    python3 -m pip install --upgrade -r /requirements.txt && \
-    git clone https://github.com/LMCache/LMCache.git /LMCache && \
-    cd /LMCache && \
-    python3 -m pip install --no-build-isolation -e . && \
-    rm -rf /var/lib/apt/lists/*
-
-ARG VLLM_NIGHTLY="false"
+    python3 -m pip install --upgrade -r /requirements.txt
 
 ENV MODEL_NAME="ByteMaster01/arctic-text2sql-r1-7b-gptq8" \
     MODEL_REVISION="" \
@@ -49,13 +30,8 @@ ENV MODEL_NAME="ByteMaster01/arctic-text2sql-r1-7b-gptq8" \
 
 ENV PYTHONPATH="/:/vllm-workspace"
 
-RUN if [ "${VLLM_NIGHTLY}" = "true" ]; then \
-    pip install -U vllm --pre --index-url https://pypi.org/simple --extra-index-url https://wheels.vllm.ai/nightly && \
-    apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && \
-    pip install git+https://github.com/huggingface/transformers.git; \
-fi
-
 COPY src /src
 
-# Start the handler
+# Reset the base image's ENTRYPOINT (vllm CLI) so our handler runs directly
+ENTRYPOINT []
 CMD ["python3", "/src/handler.py"]
