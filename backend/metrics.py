@@ -223,6 +223,32 @@ def _system_snapshot() -> dict[str, float | int | list[dict[str, float | int]]]:
     }
 
 
+def _runpod_health_snapshot() -> dict:
+    from .config import get_settings
+    import urllib.request
+    import json
+    
+    settings = get_settings()
+    endpoint_id = settings.runpod_endpoint_id
+    api_key = settings.runpod_api_key
+    base_url = settings.runpod_base_url
+    
+    if not endpoint_id or not api_key:
+        return {}
+        
+    url = f"{base_url}/{endpoint_id}/health"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"accept": "application/json", "Authorization": f"Bearer {api_key}"}
+        )
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.debug("Runpod health fetch failed: %s", exc)
+        return {}
+
+
 _collector: MetricsCollector | None = None
 _collector_lock = threading.Lock()
 
@@ -242,6 +268,7 @@ def _collector_snapshot(collector: MetricsCollector) -> dict:
     return {
         "uptime_seconds": round(time.time() - collector._start, 1),
         "system": _system_snapshot(),
+        "runpod_health": _runpod_health_snapshot(),
         "requests": {
             "total": collector.requests_total.value,
             "failed": collector.requests_failed.value,
@@ -379,6 +406,20 @@ def render_prometheus_metrics() -> str:
         lines.append(f'{metric_name}_bucket{{stage="{_prom_escape(stage_name)}",le="+Inf"}} {int(data["count"])}')
         lines.append(f'{metric_name}_sum{{stage="{_prom_escape(stage_name)}"}} {data["sum_ms"]}')
         lines.append(f'{metric_name}_count{{stage="{_prom_escape(stage_name)}"}} {int(data["count"])}')
+
+    runpod = snapshot.get("runpod_health", {})
+    if runpod:
+        jobs = runpod.get("jobs", {})
+        add_help("sovereign_sql_runpod_jobs", "RunPod serverless jobs count by status.")
+        add_type("sovereign_sql_runpod_jobs", "gauge")
+        for status, count in jobs.items():
+            lines.append(f'sovereign_sql_runpod_jobs{{status="{status}"}} {count}')
+            
+        workers = runpod.get("workers", {})
+        add_help("sovereign_sql_runpod_workers", "RunPod serverless workers count by state.")
+        add_type("sovereign_sql_runpod_workers", "gauge")
+        for state, count in workers.items():
+            lines.append(f'sovereign_sql_runpod_workers{{state="{state}"}} {count}')
 
     return "\n".join(lines) + "\n"
 
