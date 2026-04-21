@@ -1,212 +1,109 @@
-# Concurrent Lightweight Multi-Agent NL2Data Engine
+# Sovereign SQL Engine
 
-A lightweight multi-agent system for translating natural language queries into executable SQL and MongoDB queries, optimized for limited hardware resources (single CPU and ≤16GB RAM).
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react)](https://reactjs.org)
+[![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 
-**Authors:** Laksh Mendpara (B23CS1037), Sahil Preet Singh (B23CS1061)  
-**Date:** March 2025
+An industry-grade, enterprise-ready Text-to-SQL platform designed for high-concurrency, real-time data exploration. It provides a secure, streaming interface to transform natural language into optimized SQL queries, augmented by Graph and Vector retrieval.
 
-## Abstract
+---
 
-Natural language interfaces for databases (NL2SQL or NL2MongoDB) allow users to query structured data without writing database queries. Although large language models (LLMs) can generate queries from natural language, their performance degrades when database schemas contain many tables and relationships.
+## 🚀 Key Features
 
-This project proposes a lightweight multi-agent system that uses a graph-based representation of database schemas to identify relevant tables and reduce prompt size before query generation. Quantized language models running with llama.cpp are used for efficient inference, while a validation step checks generated queries before execution.
+- **Real-Time SSE Streaming**: Get instant sub-millisecond feedback on every stage—from safety checks to final data retrieval.
+- **Hybrid RAG Logic**: Combines **Pinecone** (Vector Search) for semantic matching with **Neo4j** (Graph Expansion) to discover optimal JOIN paths.
+- **Advanced Model Routing**: Automatically handles "difficult" queries using Qwen3 for logic enhancement.
+- **Self-Correcting Execution**: Detects SQL runtime errors and uses LLMs to fix and re-execute queries in real-time.
+- **Cost-Optimized Inference**: Uses Modal serverless GPU snapshots for **<2s cold starts** and zero-cost idle time.
+- **Durable Observability**: Full integration with Grafana Cloud (Loki & Prometheus) for tracking request latency, GPU health, and auditing.
 
-## Project Objectives
+---
 
-The system focuses on three main goals:
+## 🏗️ System Architecture
 
-- **Schema Filtering**: Use a graph representation of the database schema to identify the most relevant tables for a given query.
-- **Concurrent Query Handling**: Support multiple user requests using asynchronous request handling.
-- **Query Validation**: Verify generated queries in a controlled environment before executing them on the target database.
+![System Architecture Flowchart](assets/architecture_flowchart.png)
 
-## System Architecture
+The engine follows a multi-tier query architecture designed to minimize latency while maintaining absolute accuracy:
 
-```
-User Query
-    ↓
-   FastAPI Gateway
-    ↓
-┌───────────────────────────────────┐
-│ Intent Agent                      │
-└───────────────────────────────────┘
-    ↓
-┌───────────────────────────────────┐
-│ Table Selection Agent             │
-│ (Neo4j Schema Graph)              │
-└───────────────────────────────────┘
-    ↓
-┌───────────────────────────────────┐
-│ Query Generator                   │
-│ (Quantized LLM)                   │
-└───────────────────────────────────┘
-    ↓
-┌───────────────────────────────────┐
-│ Validation Agent                  │
-└───────────────────────────────────┘
-    ↓
-  Database
-```
+1.  **Safety & Routing**: Llama Guard 3 security audit + Phi-4 complexity classification.
+2.  **Schema Retrieval**: Semantic search (Pinecone) expanded by Graph relationships (Neo4j).
+3.  **Generation & Fixing**: SQL drafting (Arctic/Phi-4) followed by optional refinement/correction (Qwen3).
 
-## Key Methodology
+> [!NOTE]
+> For a technical deep dive, see **[Architecture Documentation](docs/ARCHITECTURE.md)**.
 
-### Graph-Based Schema Representation
+---
 
-The database metadata (tables, columns, and relationships) is represented as a property graph in Neo4j.
+## 🛠️ Tech Stack
 
-- **Entity Identification**: Keywords extracted from the user query are matched with nodes in the schema graph.
-- **Relationship Traversal**: If multiple entities are referenced in a query, the system identifies a join path between them using graph traversal.
-- **Context Reduction**: Only the relevant subset of tables is provided to the language model, reducing prompt size and improving efficiency.
+### AI & Inference
+- **Models**: NVIDIA Arctic, Phi-4-mini, Llama Guard 3, Qwen3.
+- **Platforms**: [Modal](https://modal.com) (Serverless GPUs), [RunPod](https://runpod.io).
+- **Engine**: vLLM (Quantized AWQ4).
 
-### Concurrent Inference
+### Data & Retrieval
+- **Vector DB**: Pinecone.
+- **Graph DB**: Neo4j.
+- **Metadata**: SQLite Cloud.
+- **Execution DB**: Local SQLite.
 
-Inference is performed using quantized models running with llama-cpp-python. The server supports multiple inference slots that allow several requests to remain active simultaneously.
+### Infrastructure
+- **Backend**: FastAPI (Python 3.12).
+- **Frontend**: React 18, Vite, Vanilla CSS.
+- **Monitoring**: Prometheus, Loki, Grafana, Promtail.
 
-**Throughput Equation:**
-$$\text{Throughput} = \frac{\text{Number of Slots}}{\text{Average Token Generation Time}}$$
+---
 
-Although token generation is sequential on the CPU, asynchronous request handling ensures that multiple users can interact with the system without blocking.
+## 📂 Project Structure
 
-### Lightweight Language Models
-
-Small language models (1.5B–7B parameters) are used with 4-bit quantization to reduce memory usage. These models can generate accurate SQL queries when provided with well-structured schema context.
-
-## Project Structure
-
-```
+```bash
 sovereign-sql-engine/
-├── vllm_worker/              # vLLM-based inference worker
-│   ├── src/
-│   │   ├── engine.py         # Core query generation engine
-│   │   ├── handler.py        # Request handling
-│   │   ├── engine_args.py    # Configuration
-│   │   ├── tokenizer.py      # Tokenization utilities
-│   │   ├── constants.py      # Constants and configs
-│   │   └── utils.py          # Utility functions
-│   ├── Dockerfile            # Container configuration
-│   ├── docker-bake.hcl       # Docker build configuration
-│   └── docs/                 # Documentation
-├── arctic-quantization/      # Model quantization utilities
-│   ├── quantize_bnb8.py      # 8-bit quantization
-│   ├── quantize_gptq8.py     # GPTQ quantization
-│   └── test_model.py         # Model testing
-├── metadata_creation/        # Schema graph creation
-│   ├── main.py               # Metadata extraction logic
-│   └── conn_test.py          # Database connection testing
-├── modal_deployment/         # Modal.com deployment
-│   ├── app.py                # Modal application
-│   └── test.py               # Tests
-└── README.md                 # This file
+├── backend/            # FastAPI Orchestrator (SSE, RAG, Metrics)
+├── frontend/           # React Web Interface (Streaming UI)
+├── modal_deployment/   # Serverless GPU Node scripts (L4/T4)
+├── docs/               # Detailed Project Documentation (MD)
+├── pipeline_test/      # End-to-end integration test suites
+└── docker-compose.yml  # Local stack orchestration
 ```
 
-## Libraries and Frameworks
+---
 
-- **Hugging Face** – model repository for SQL generation and instruction models
-- **llama-cpp-python** – CPU-based inference engine for quantized GGUF models
-- **Neo4j** – graph database for representing database schema relationships
-- **FastAPI** – backend framework for handling HTTP requests and managing asynchronous workflows
-- **LangGraph** – framework for coordinating interactions between system agents
-- **Docker** – containerization and deployment
-- **vLLM** – optimized inference engine for language models
+## ⚡ Quick Start
 
-## Datasets and Models
+### 1. Configure Environment
+Copy `.env.example` to `.env` in the root and fill in your keys:
+- `QWEN3_API_TOKEN`, `RUNPOD_API_KEY`, `PINECONE_API_KEY`, `SQLITE_CLOUD_CONN_STR`.
 
-### Datasets
-- **Spider 1.0**: Large-scale domain-specific semantic parsing dataset
-- **BIRD Benchmark**: A large-scale text-to-SQL benchmark with diverse databases
-
-### Models
-- **SQLCoder-7B** (GGUF format) – for SQL query generation
-- **Qwen-2.5-1.5B-Instruct** – for intent detection and routing
-
-## Implementation Stages
-
-1. **Schema Graph Construction**: Extract metadata from the database and store it in Neo4j
-2. **Model Setup**: Deploy quantized language models using llama.cpp or vLLM
-3. **Agent Pipeline Development**: Implement the sequence of agents for intent detection, table selection, query generation, and validation
-4. **API Integration**: Build FastAPI endpoints to expose the query translation service
-5. **Frontend Interface**: Develop a web interface to submit queries and display generated SQL and execution results
-6. **Deployment**: Containerize and deploy using Docker
-
-## Getting Started
-
-### Prerequisites
-- Python 3.8+
-- Docker (optional, for containerized deployment)
-- Neo4j (for schema graph storage)
-- 16GB RAM (minimum recommended)
-
-### Installation
-
+### 2. Launch with Docker
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd sovereign-sql-engine
-
-# Install dependencies for vLLM worker
-cd vllm_worker
-pip install -r builder/requirements.txt
-
-# Install quantization utilities
-cd ../arctic-quantization
-pip install -e .
-
-# Install metadata creation tools
-cd ../metadata_creation
-pip install -e .
+docker compose up --build -d
 ```
+The application will be available at:
+- **Frontend**: `http://localhost:3000`
+- **Backend API**: `http://localhost:8000`
+- **Metrics**: `http://localhost:8000/metrics/prometheus`
 
-### Running the System
+---
 
-Each component can be run independently:
+## 📖 Detailed Documentation
 
-```bash
-# Start the vLLM worker
-cd vllm_worker
-python -m src.engine
+Explore our comprehensive guides for in-depth technical knowledge:
 
-# Setup schema graph (requires Neo4j running)
-cd metadata_creation
-python main.py --database-url <your-db-connection>
+- 📐 **[System Architecture](docs/ARCHITECTURE.md)** - Multi-tier logic and data flow.
+- ⚙️ **[Inference Infrastructure](docs/INFRASTRUCTURE.md)** - Modal, GPU Specs, and Cost Scaling.
+- 🧬 **[RAG Pipeline & Graph Logic](docs/PIPELINE.md)** - Pinecone and Neo4j BFS expansion.
+- 📊 **[Observability & Metrics](docs/OBSERVABILITY.md)** - Dashboard setup and Prometheus logs.
+- 📡 **[SSE Event Specification](docs/SSE_EVENTS.md)** - Streaming protocol details.
+- 🏎️ **[Performance Benchmarks](docs/PERFORMANCE.md)** - Load testing and async metrics.
 
-# Test the inference pipeline
-cd arctic-quantization
-python test_model.py
-```
+---
 
-## Architecture Components
+## 👨‍💻 Contributing
 
-### VLLMWorker (`vllm_worker/`)
-The core inference component handling query generation using optimized inference engines.
+1. Fork the repo and create your branch.
+2. Ensure all changes are reflected in both the `backend/` logic and the corresponding `docs/` file.
+3. Submit a PR for review.
 
-### Quantization Module (`arctic-quantization/`)
-Utilities for quantizing models to 4-bit or 8-bit precision for efficient inference on CPU.
+---
 
-### Metadata Creation (`metadata_creation/`)
-Extracts database schema information and constructs the Neo4j graph representation.
-
-### Deployment (`modal_deployment/`)
-Cloud-ready deployment configuration using Modal.com for serverless inference.
-
-## Performance Characteristics
-
-- **Memory Usage**: ≤16GB RAM for complete system
-- **Inference Speed**: Token generation on single CPU with multiple concurrent slots
-- **Model Support**: 1.5B–7B parameter models with 4-bit quantization
-- **Supported Databases**: SQL (MySQL, PostgreSQL, etc.) and MongoDB
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- Code follows the project structure
-- Models are in GGUF format
-- Tests pass before submitting PRs
-
-## License
-
-See [LICENSE](LICENSE) file for details.
-
-## References
-
-- Spider 1.0 Dataset: https://spider.ws/
-- BIRD Benchmark: https://bird-bench.github.io/
-- llama-cpp-python: https://github.com/abetlen/llama-cpp-python
+**Sovereign SQL Engine** — *Privacy-First, Context-Aware, Enterprise Text-to-SQL.*
