@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from pinecone import Pinecone
 
@@ -28,6 +29,8 @@ class PineconeService:
         self.embed_model = embed_model
         self.rerank_model = rerank_model
         self.db_name = db_name
+        self._db_filter_supported: bool | None = None
+        self._db_filter_lock = threading.Lock()
         self.client = Pinecone(api_key=api_key)
         if index_host:
             self.index = self.client.Index(host=index_host)
@@ -53,20 +56,25 @@ class PineconeService:
         return 0.0
 
     def _query_with_db_fallback(self, vector: list[float], top_k: int, category: str):
+        fallback_filter = {"category": {"$eq": category}}
         strict_filter = {"category": {"$eq": category}, "db": {"$eq": self.db_name}}
+
+        use_strict_filter = self._db_filter_supported is not False and bool(self.db_name)
+        query_filter = strict_filter if use_strict_filter else fallback_filter
+
         self.logger.debug(
             "Pinecone query namespace=%s category=%s top_k=%d filter=%s",
             self.namespace,
             category,
             top_k,
-            strict_filter,
+            query_filter,
         )
         try:
             response = self.index.query(
                 vector=vector,
                 top_k=top_k,
                 namespace=self.namespace,
-                filter=strict_filter,
+                filter=query_filter,
                 include_metadata=True,
             )
         except Exception as exc:
@@ -76,36 +84,57 @@ class PineconeService:
                 exc,
             )
             return []
+
         matches = list(response.matches)
-        self.logger.info(
-            "Pinecone returned %d matches for category=%s with db filter db=%s",
-            len(matches),
-            category,
-            self.db_name,
-        )
         if matches:
+            if use_strict_filter:
+                with self._db_filter_lock:
+                    self._db_filter_supported = True
+            self.logger.info(
+                "Pinecone returned %d matches for category=%s using %s filter",
+                len(matches),
+                category,
+                "db" if use_strict_filter else "category-only",
+            )
             return matches
 
-        fallback_filter = {"category": {"$eq": category}}
-        self.logger.warning(
-            "No Pinecone matches with db filter db=%s for category=%s; retrying without db filter",
-            self.db_name,
-            category,
-        )
-        fallback_response = self.index.query(
-            vector=vector,
-            top_k=top_k,
-            namespace=self.namespace,
-            filter=fallback_filter,
-            include_metadata=True,
-        )
-        fallback_matches = list(fallback_response.matches)
+        if use_strict_filter:
+            with self._db_filter_lock:
+                self._db_filter_supported = False
+            self.logger.info(
+                "Pinecone db filter produced no matches for category=%s db=%s; "
+                "switching to category-only retrieval",
+                category,
+                self.db_name,
+            )
+            try:
+                fallback_response = self.index.query(
+                    vector=vector,
+                    top_k=top_k,
+                    namespace=self.namespace,
+                    filter=fallback_filter,
+                    include_metadata=True,
+                )
+                fallback_matches = list(fallback_response.matches)
+                self.logger.info(
+                    "Pinecone returned %d fallback matches for category=%s without db filter",
+                    len(fallback_matches),
+                    category,
+                )
+                return fallback_matches
+            except Exception as exc:
+                self.logger.warning(
+                    "Pinecone fallback query unavailable for category=%s; returning no matches. error=%s",
+                    category,
+                    exc,
+                )
+                return []
+
         self.logger.info(
-            "Pinecone returned %d fallback matches for category=%s without db filter",
-            len(fallback_matches),
+            "Pinecone returned 0 matches for category=%s using category-only retrieval",
             category,
         )
-        return fallback_matches
+        return []
 
     def _embed_query(self, query: str) -> list[float]:
         self.logger.debug("Embedding query for Pinecone retrieval")
