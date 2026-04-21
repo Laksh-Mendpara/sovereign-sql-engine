@@ -77,6 +77,10 @@ class BackendSettings(BaseSettings):
     top_k_tables: int = Field(default=5, alias="TOP_K_TABLES")
     initial_retrieval_multiplier: int = Field(default=3, alias="INITIAL_RETRIEVAL_MULTIPLIER")
 
+    qwen3_api_token: str = Field(default="", alias="QWEN3_API_TOKEN")
+    qwen3_base_url: str = Field(default="https://api.openai.com/v1", alias="QWEN3_BASE_URL")
+    advanced_model_name: str = Field(default="gpt-4o-mini", alias="ADVANCED_MODEL_NAME")
+
     # ── App metadata ──────────────────────────────────────────────────────────
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
     app_name: str = Field(default="sovereign-sql-backend", alias="APP_NAME")

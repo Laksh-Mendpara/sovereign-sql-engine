@@ -39,6 +39,7 @@ function eventTone(type, data) {
   if (type === 'guard' && data?.allowed === false) return 'danger'
   if (type === 'classification' && data?.label === 'out_of_topic') return 'warning'
   if (type === 'execution.remark' && data?.blocked_by_firewall) return 'danger'
+  if (type === 'runpod' && data?.runpod_response?.advanced_model) return 'live'
   return 'neutral'
 }
 
@@ -61,6 +62,8 @@ function eventSummary(type, data) {
     case 'schema':
       return 'Schema SQL prepared.'
     case 'runpod':
+      if (data?.runpod_response?.fixed) return 'SQL fixed (Self-Corrected by Qwen3).'
+      if (data?.runpod_response?.advanced_model) return 'SQL enhanced (Refined by Qwen3).'
       return data?.generated_sql ? 'Final SQL generated.' : 'No SQL returned.'
     case 'execution.remark':
       return data?.blocked_by_firewall
@@ -92,7 +95,7 @@ function eventHeading(type) {
     case 'schema':
       return 'Schema SQL'
     case 'runpod':
-      return 'Final SQL'
+      return 'SQL Generation'
     case 'execution.remark':
       return 'Execution remark'
     case 'execution.data':
@@ -511,7 +514,9 @@ export default function App() {
                               : selectedEvent.type === 'execution.remark'
                                 ? (selectedEvent.data?.blocked_by_firewall ? 'Firewall block' : 'Execution allowed')
                                 : selectedEvent.type === 'runpod'
-                                  ? (selectedEvent.data?.generated_sql ? 'Final SQL ready' : 'No SQL')
+                                  ? (selectedEvent.data?.runpod_response?.fixed ? 'Self-Corrected (Qwen3)' 
+                                    : selectedEvent.data?.runpod_response?.advanced_model ? 'Enhanced (Qwen3)' 
+                                    : selectedEvent.data?.generated_sql ? 'Final SQL ready' : 'No SQL')
                                   : selectedEvent.type}
                         </strong>
                       </div>

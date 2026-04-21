@@ -41,6 +41,9 @@ if TYPE_CHECKING:
     from .services.sql_execution_service import SqlExecutionService
     from .services.runpod_service import RunpodService
 
+from .services.advanced_sql_service import AdvancedSqlService
+from .lru_cache import pipeline_cache
+
 from .logic_models import (
     ClassificationResult,
     GuardResult,
@@ -109,6 +112,7 @@ class SSEPipelineExecutor:
         self.metadata = metadata_service
         self.sql_executor = sql_execution_service
         self.runpod = runpod_service
+        self.advanced_sql = AdvancedSqlService(self.cfg, logger)
         self.observability = observability_service
         self.metrics: MetricsCollector = get_metrics()
         self._audit_state: dict[str, Any] = {}
@@ -140,9 +144,31 @@ class SSEPipelineExecutor:
             "terminal_state": "running",
         }
 
+        cached_events = pipeline_cache.get(query)
+        if cached_events:
+            logger.info("sse.cache_hit", extra={"query": query})
+            import copy
+            for event_name, payload in cached_events:
+                p = copy.deepcopy(payload)
+                if event_name == "pipeline.start":
+                    p.request_id = request_id
+                    p.trace_id = trace_id
+                seq += 1
+                data = p.model_dump_json() if hasattr(p, "model_dump_json") else str(p)
+                yield {"event": event_name, "data": data, "id": str(seq)}
+            self._audit_state.update({
+                "execution_status": "cached",
+                "terminal_state": "complete",
+            })
+            await asyncio.to_thread(self.observability.upsert_request_record, dict(self._audit_state))
+            return
+
+        emitted_events = []
+
         def _emit(event_name: str, payload: Any) -> None:
             """Thread-safe: can be called from to_thread callbacks or coroutines."""
             queue.put_nowait((event_name, payload))
+            emitted_events.append((event_name, payload))
 
         # ── Immediately emit pipeline.start ────────────────────────────────────
         start_payload = SSEStartPayload(
@@ -245,6 +271,10 @@ class SSEPipelineExecutor:
             "sse.pipeline.done",
             extra={"total_ms": timer.total_ms, "request_id": request_id},
         )
+        
+        # Cache the result if successfully ran execution
+        if not self._audit_state.get("error_type") and getattr(watcher, "_sse_skipped", False) is False:
+            pipeline_cache.put(query, emitted_events)
 
     # ── Task A: Guard ─────────────────────────────────────────────────────────
 
@@ -407,8 +437,8 @@ class SSEPipelineExecutor:
                 )
                 return
 
-            # 6. RunPod — terminal stage
-            await self._runpod_and_emit(query, schema_sql, timer, emit)
+            # 6. RunPod / Advanced Model — terminal stage
+            await self._runpod_and_emit(query, schema_sql, timer, emit, classification.label)
 
         except asyncio.CancelledError:
             raise
@@ -537,18 +567,26 @@ class SSEPipelineExecutor:
         schema_sql: str,
         timer: StageTimer,
         emit: Any,
+        difficulty_label: str,
     ) -> None:
         with timed_span("runpod_ms", timer, self.metrics.runpod_latency):
             payload = build_arctic_runpod_input(query, schema_sql)
             logger.info("sse.runpod.start")
-            response: dict = await asyncio.wait_for(
+            response: dict = await asyncio.wait_for(  # type: ignore[no-redef]
                 asyncio.to_thread(self.runpod.run_request, payload),
                 timeout=self.cfg.runpod_timeout,
             )
             logger.info("sse.runpod.done", extra={"status": response.get("status", "unknown")})
+            generated_sql = self._extract_sql(response) 
+
+            if difficulty_label == "difficult":
+                logger.info("sse.advanced_sql.start")
+                generated_sql = await self.advanced_sql.improve_sql(query, schema_sql, generated_sql)
+                response["advanced_model"] = True
+                response["improved"] = True
+                logger.info("sse.advanced_sql.done")
 
         elapsed = timer.as_dict().get("runpod_ms", 0.0)
-        generated_sql = self._extract_sql(response)
         emit("runpod", SSERunpodPayload(
             generated_sql=generated_sql,
             runpod_response=response,
@@ -581,14 +619,36 @@ class SSEPipelineExecutor:
                     execution_data = None
             except Exception as exc:
                 logger.warning("sse.sql_execute.failed", extra={"error": str(exc)})
-                self._audit_state.update(
-                    {
-                        "execution_status": "error",
-                        "terminal_state": "error",
-                        "error_type": type(exc).__name__,
-                        "error_message": str(exc),
-                    }
-                )
+                try:
+                    logger.info("sse.advanced_sql.fixing")
+                    fixed_sql = await self.advanced_sql.fix_sql(query, schema_sql, execution_plan.execution_sql, str(exc))
+                    # Re-emit runpod/remark data to update the streaming UI 
+                    emit("runpod", SSERunpodPayload(
+                        generated_sql=fixed_sql,
+                        runpod_response={"advanced_model": True, "fixed": True},
+                        latency_ms=0.0,
+                    ))
+                    execution_plan = plan_sql_execution(fixed_sql)
+                    emit("execution.remark", SSEExecutionRemarkPayload(
+                        remark=execution_plan.remark,
+                        execution_sql=execution_plan.execution_sql,
+                        blocked_by_firewall=execution_plan.blocked_by_firewall,
+                    ))
+                    self._audit_state["execution_sql"] = execution_plan.execution_sql
+                    if execution_plan.execution_sql and not execution_plan.blocked_by_firewall:
+                        execution_data = await self._execute_sql(execution_plan.execution_sql)
+                        if not execution_data:
+                            execution_data = None
+                except Exception as fix_exc:
+                    logger.warning("sse.sql_execute.fix.failed", extra={"error": str(fix_exc)})
+                    self._audit_state.update(
+                        {
+                            "execution_status": "error",
+                            "terminal_state": "error",
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc),
+                        }
+                    )
         emit("execution.data", SSEExecutionDataPayload(
             execution_sql=execution_plan.execution_sql,
             execution_data=execution_data,
